@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Created on 16 déc. 2019
+Created on 16 dec. 2019
 
 @author: martin.schoreisz
 
@@ -11,48 +11,22 @@ import pandas as pd
 from Outils import plus_proche_voisin,nb_noeud_unique_troncon_continu
 from collections import Counter
 
-
-def noeud_fv_ligne_ss_trafic(df_trafic, type_carr):
+def noeuds_estimables(df_trafic_pt_comptg):
     """
-    Trouver les noeuds du fv qui ont des lignes sans trafic qui arrivent
+    trouver les noeuds pouvant etre estime, i.e avec au moins 1 valuer de trafic pour les toncons qui arrivent.
     in : 
-        type_carr : string : designe le type de filtre a appliquer :soit on garde que les noeud qui contiennent 1seul NaN ('max 1 NaN')
-                            soit tous les noeuds qui contiennent au moins un valeur de trafic ('min 1 ok')
-    out : 
-        noeud_grp : df des noeud avec des tuples issu des voies entrantes pour : le tmjo, la cat_rhv, le nb de NaN, sic'est estimable ou non (édfinition variable
-                    selon type_carr
-        df_noeuds : dataframe de tout les noeuds            
+        df_trafic_pt_comptg : df des lignes fv avec simplification des ronds points et trafics des points de compatges
     """
     #1. faire la liste des lignes et des noeuds
-    df_noeuds=pd.concat([df_trafic[['id_ign','source','tmjo_2_sens','cat_rhv','rgraph_dbl']].rename(columns={'source':'noeud'}),
-                            df_trafic[['id_ign','target','tmjo_2_sens','cat_rhv','rgraph_dbl']].rename(columns={'target':'noeud'})],axis=0,sort=False)
+    df_noeuds=pd.concat([df_trafic_pt_comptg[['id_ign','source','tmjo_2_sens','cat_rhv','rgraph_dbl']].rename(columns={'source':'noeud'}),
+                            df_trafic_pt_comptg[['id_ign','target','tmjo_2_sens','cat_rhv','rgraph_dbl']].rename(columns={'target':'noeud'})],axis=0,sort=False)
     df_noeuds.tmjo_2_sens.fillna(-99,inplace=True)
     #2. Trouver les noeuds qui comporte au moins une valeur connue. On y affecte une valuer True dans un attribut drapeau 'estimable'
     noeud_grp=df_noeuds.groupby('noeud').agg({'tmjo_2_sens':lambda x : tuple(x),'cat_rhv':lambda x : tuple(x)}).reset_index()
     noeud_grp['nb_nan']=noeud_grp.tmjo_2_sens.apply(lambda x : Counter(x))
-    if type_carr == 'max 1 NaN' :
-        noeud_grp['estimable']=noeud_grp.apply(lambda x : True if len(x['nb_nan'])>2 and x['nb_nan'][-99]==1 else False,axis=1)
-    elif type_carr == 'min 1 ok' : 
-        noeud_grp['estimable']=noeud_grp.apply(lambda x : True if len(x['nb_nan'])>2 and x['nb_nan'][-99]<len(x['nb_nan']) and x['nb_nan'][-99]!=0 else False,axis=1)
-    return noeud_grp, df_noeuds
-
-def trouver_noeud_3tronc_1NaN(df_traf_finale, liste_noeud_traites):
-    """
-    trouver les noeuds au centre de 3troncons dont 1 seul à 1 rtafic inconnu
-    in : 
-        df_traf_finale : dataframe du filaire de voie avec rond point simplifie et idtroncon, qui va etre mise à jour en trafic ensuite
-        liste_noeud_traites : liste des noeuds ayant fait l'objet d'une tentive de rensignement et qui ont foires
-    out : 
-        liste_noeuds_a_traiter : liste des noeuds a passer à la fonction de aclcul
-    """
-    #trouver les noeuds fv concernes par des lignes à mettre à jour
-    noeud_grp,df_noeud_tot=noeud_fv_ligne_ss_trafic(df_traf_finale,'max 1 NaN')
-    #se limiter aux noeuds présentant 3 lignes (pour rappel, seul une ligne présente un trafic inconnu)
-    df_noeud_3tronc=noeud_grp.loc[(noeud_grp['estimable']) & 
-                 (noeud_grp.apply(lambda x : len(x['tmjo_2_sens'])==3, axis=1)) & (~noeud_grp.noeud.isin(liste_noeud_traites))]
-    liste_noeud=df_noeud_3tronc.noeud.tolist()
-    return liste_noeud,df_noeud_tot
-    
+    noeud_grp['estimable']=noeud_grp.apply(lambda x : True if len(x['nb_nan'])>2 and x['nb_nan'][-99]<len(x['nb_nan']) and x['nb_nan'][-99]!=0 else False,axis=1)
+    noeud_estimable=noeud_grp.loc[noeud_grp['estimable']].copy()
+    return noeud_estimable,noeud_grp, df_noeuds
 
 def df_noeud_troncon(df_tot, noeud,df_noeud_tot):
     """
@@ -102,28 +76,50 @@ def verif_double_sens(df, df_tot):
     #ajout d'un attribut supplémentaire
     df['rgraph_dbl_2']=df.apply(lambda x : nb_sens(x['rgraph_dbl'],x['nb_noeud_unique'],x['nb_noeud'],x['nb_lgn_tch_noeud_unique'],x['nb_lgn']), axis=1)
 
-def verif_carrefour_2_chaussees(df, df_rdpt_simple, df_tot, graph,num_noeud):
+def carac_troncon_noeud(df_rdpt_simple, df_tot, graph,num_noeud,df_noeuds):
     """
     verifier que les voies représetées par 2 lignes ne croise bien que 2 autres troncons. 
     Cette vérif est due à l'analyse par noeud : pour une 2*2 voies il y a 4 noeuds de fin, dc on pourrait louper des lignes
     in : 
-        df : df des troncon arrivant sur un noeud, issu de verif_double_sens()
         df_rdpt_simple : ataframe du filaire de voie avec rond point simplifie et idtroncon
-        df_tot : 
+        df_tot : df du filaire sans modif des ronds points
         graoh : table des vertex du graph sans modif liées au rond points. cf classe Troncon fonction groupe_noeud_route_2_chaussees()
         num_noeud : integer : numero du noeud du carrefour
+        df_noeuds : df de tout les oeuds, issu de noeuds_estimables()
+    out : 
+        df_tronc_finale : df des tronncon arrivant sur un noeud, toutes voies confodues (prise en compte 2*2 voies)
     """
-    if (df.loc[df['maj']].rgraph_dbl==0).all() and (df.loc[df['maj']].rgraph_dbl_2==1).all() : 
-        #trouver le troncon à mettre à jour :
-        troncon=Troncon(df_rdpt_simple,df.loc[df['maj']].idtronc.values[0])
-        #sutilisation de la cle de correspondance entre les neouds
-        corresp_noeud_uniq=troncon.groupe_noeud_route_2_chaussees(graph,100)
-        noeud_parrallele=corresp_noeud_uniq.loc[corresp_noeud_uniq['id_left']==num_noeud].id_right.values[0]
-        #trouver les troncon qui intersectent ce troncon sur le debut ou la fin et qui n'ont pas été fléchés au début
-        df_troncons_sup=df_tot.loc[((df_tot['source']==noeud_parrallele) | (df_tot['target']==noeud_parrallele)) & 
-                               (~df_tot.idtronc.isin(df.idtronc.tolist()))].copy()
-        if not df_troncons_sup.empty : 
-            raise PasDeTraficError(troncon.id)
+    df_troncon_noeud=df_noeud_troncon(df_rdpt_simple, num_noeud,df_noeuds)
+    verif_double_sens(df_troncon_noeud,df_tot)
+    list_troncon_suspect=df_troncon_noeud.loc[(df_troncon_noeud['rgraph_dbl']==0) & (df_troncon_noeud['rgraph_dbl_2']==1)].idtronc.tolist()
+    if list_troncon_suspect :
+        for t in  list_troncon_suspect : 
+            troncon=Troncon(df_rdpt_simple,t)
+            corresp_noeud_uniq=troncon.groupe_noeud_route_2_chaussees(graph,100)
+            noeud_parrallele=corresp_noeud_uniq.loc[corresp_noeud_uniq['id_left']==num_noeud].id_right.values[0]
+            #trouver les troncon qui intersectent ce troncon sur le debut ou la fin et qui n'ont pas été fléchés au début
+            df_troncons_sup=df_tot.loc[((df_tot['source']==noeud_parrallele) | (df_tot['target']==noeud_parrallele)) & 
+                                   (~df_tot.idtronc.isin(df_troncon_noeud.idtronc.tolist()))].idtronc.tolist()
+            df_troncon_noeud_sup=df_noeud_troncon(df_rdpt_simple, noeud_parrallele,df_noeuds)
+            df_troncon_noeud_sup=df_troncon_noeud_sup.loc[df_troncon_noeud_sup.idtronc.isin(df_troncons_sup)].copy()
+            verif_double_sens(df_troncon_noeud_sup,df_tot)
+            df_tronc_finale=pd.concat([df_troncon_noeud,df_troncon_noeud_sup], axis=0, sort=False).drop_duplicates('idtronc')
+        return df_tronc_finale
+    else : 
+        return df_troncon_noeud
+
+def type_estim(df_troncon_noeud):
+    """
+    deduire du nb de ligne et de valuer inconnu le type d'estimation a realiser
+    in : 
+        df_troncon_noeud : df issue de carac_troncon_noeud()
+    out : 
+        type_estim : string : 'calcul_3_voies' ou 'MMM'
+    """
+    if (len(df_troncon_noeud.idtronc.unique()) == 3 and 
+        len(df_troncon_noeud.loc[df_troncon_noeud['tmjo_2_sens']==-99].idtronc.unique())==1) : 
+        return 'calcul_3_voies'
+    else : return 'MMM'
 
 def separer_troncon_a_estimer(df):
     """
@@ -132,25 +128,14 @@ def separer_troncon_a_estimer(df):
         df : dataframe des voies arrivants à un noeud, issu de df_noeud_troncon()
     """
     return df.loc[df['tmjo_2_sens']!=-99], df.loc[df['tmjo_2_sens']==-99]
-
-def calcul_trafic_manquant_3troncons(num_noeud, df,df_rdpt_simple, df_tot, nom_idtroncon, graph) : 
+    
+def calcul_trafic_manquant_3troncons(df) : 
     """
     detreminer du trafic sur unnoeud a 3 voies avec 2 trafic connu
     in : 
-        num_noeud : identifiant du noeud
-        df : df des lignes liées au noeud
-        df_rdpt_simple : dataframe du filaire de voie avec rond point simplifie et idtroncon
-        df_tot : df globale du reseau routier sans simplification des rd points. doit contenir un attribut de groupement par troncon
-        nom_idtroncon : string : nom de l'attribut de groupement par troncon
-        graph : table des vertex du graph sans modif liées au rond points. cf classe Troncon fonction groupe_noeud_route_2_chaussees()
+        df : df des troncons liées au noeud
     """
-     
-    #vérif / mise en forme
-    df_calcul=df.copy()
-    verif_double_sens(df_calcul,df_tot) #ajouter un deuxieme attribuit decrovant le double sens
-    verif_carrefour_2_chaussees(df_calcul,df_rdpt_simple, df_tot, graph,num_noeud) #leve une erreur siplus de 3 troncon aux carrefour (du au 2*2 voies)
-    #print(df_calcul)
-    df_calcul_trafic_exist,df_calcul_trafic_null=separer_troncon_a_estimer(df_calcul)
+    df_calcul_trafic_exist,df_calcul_trafic_null=separer_troncon_a_estimer(df)
     
     #calcul selon les cas de sens unique ou non
     if (df_calcul_trafic_exist.rgraph_dbl_2==0).all() : 
@@ -167,46 +152,8 @@ def calcul_trafic_manquant_3troncons(num_noeud, df,df_rdpt_simple, df_tot, nom_i
         return df_calcul_trafic_exist.tmjo_2_sens.max()-df_calcul_trafic_exist.tmjo_2_sens.min()
     else : 
         if (df_calcul_trafic_null.rgraph_dbl_2==1).all() : 
-            return df_calcul_trafic_exist.loc[df_calcul_trafic_exist['rgraph_dbl']==1].tmjo_2_sens.values[0]
+            return df_calcul_trafic_exist.loc[df_calcul_trafic_exist['rgraph_dbl_2']==1].tmjo_2_sens.values[0]
 
-def maj_carrefour_3_troncons(liste_noeud,df_tot,df_rdpt_simple,df_noeud_tot,graph):
-    """
-    mettre a jour des valuers de trafic pour les troncons arrivant sur des carrefours a 3 troncnons
-    in : 
-        liste_noeud : liste des noeuds a traiter
-        df_tot : df globale du reseau routier sans simplification des rd points. doit contenir un attribut de groupement par troncon, source, target, tmja 
-                issu des points de comptage, etc.
-        df_rdpt_simple : dataframe du filaire de voie avec rond point simplifie et idtroncon
-        df_noeud_tot : dataframe de l'ensemnle des noeuds, issus de noeud_fv_ligne_ss_trafic()
-        graph : df des vertex du graph sans modif liées au rond points. cf classe Troncon fonction groupe_noeud_route_2_chaussees()
-    out : 
-        dico_trafic_troncon : dico des trafic par troncon. cle : troncon, value :trafic
-        dico_noeud_pb : dico des oeuds sans trafic, en cle le numero de noeud
-    """
-    dico_trafic_troncon,dico_noeud_pb={},{}
-    for noeud in liste_noeud :
-        print(noeud)
-        df_noeud=df_noeud_troncon(df_rdpt_simple,noeud,df_noeud_tot)
-        df_noeud['maj']=df_noeud.apply(lambda x : True if x['tmjo_2_sens']==-99 else False, axis=1)
-        troncon_noeud=df_noeud.loc[df_noeud['maj']].idtronc.values[0]
-        try : 
-            df_noeud.loc[df_noeud['maj'],'tmjo_2_sens']=df_noeud.apply(lambda x : calcul_trafic_manquant_3troncons(
-                noeud,df_noeud,df_rdpt_simple,df_tot,'idtronc',graph), axis=1)
-        except PasDeTraficError :
-            dico_noeud_pb[noeud]=(troncon_noeud,'PasDeTraficError')
-            continue
-        except IndexError : 
-            dico_noeud_pb[noeud]=(troncon_noeud,'IndexError')
-            continue
-        if df_noeud.tmjo_2_sens.isnull().any() : 
-            dico_noeud_pb[noeud]=(troncon_noeud,'autre Pb trafic')
-            continue
-        dico_trafic_troncon[df_noeud.loc[df_noeud['maj']].idtronc.values[0]]=df_noeud.loc[df_noeud['maj']].tmjo_2_sens.values[0]
-    
-    return dico_trafic_troncon, dico_noeud_pb
-
-
-  
 class Troncon(object):
     """
     caractériser un troncon continu.
@@ -269,10 +216,9 @@ class PasDeTraficError(Exception):
     """
     def __init__(self, idtroncon):
         Exception.__init__(self,f'pas de trafic sur le troncon : {idtroncon}')
-        self.erreur_type='PasDeTraficError'   
-    
-    
-    
-    
-    
-    
+        self.erreur_type='PasDeTraficError'  
+
+
+
+
+
