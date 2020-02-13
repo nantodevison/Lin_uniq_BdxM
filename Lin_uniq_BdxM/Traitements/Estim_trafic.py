@@ -4,7 +4,7 @@ Created on 16 dec. 2019
 
 @author: martin.schoreisz
 
-Module de ventilation des trafics issus des points de comptages
+Module d'estimation des trafics à partir des trafic des points de comptages linearises
 '''
 
 import pandas as pd
