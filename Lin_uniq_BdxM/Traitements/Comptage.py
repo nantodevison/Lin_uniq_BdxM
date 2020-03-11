@@ -10,7 +10,7 @@ import re
 import geopandas as gp
 import pandas as pd
 import numpy as np
-from difflib import get_close_matches,SequenceMatcher
+from difflib import SequenceMatcher
 from sklearn.cluster import DBSCAN
 from Outils import plus_proche_voisin
 
@@ -200,7 +200,7 @@ def traitements_bdxm_pct(chemin,gdf_rhv_groupe):
     ptSup2SensCircu2OkTmjo=ptsup2_2senscircu_bdxm_pct(pt_sup2)
     ptSup2SensCircuSup2Oktmjo=pt_restants_bdxm_pct(pt_sup2)[0]
     affect_finale=affectation_final_bdxm_pct(ptSup2SensCircuSup2Oktmjo,idtroncOkTmjo,ptSup2SensCircu2OkTmjo)
-    return affect_finale
+    return affect_finale, cpt_pct_l93
     
     
     
