@@ -113,7 +113,7 @@ def export_cpt_perm_linearises(gdf_rhv_cpt_perm_123,fichier):
                     , axis=1)
     gdf_rhv_cpt_perm_123[['id_x', 'ident', 'domanial', 'groupe', 'cat_dig', 'cat_rhv', 'passage',
            'rggraph_nd', 'rggraph_na', 'rgraph_dbl', 'numero', 'cdate', 'mdate',
-           'id_ign', 'nature', 'sens', 'codevoie_d', 'importance', 'id_y',
+           'id_ign', 'nature', 'sens', 'codevoie_d', 'importance', 'id_y','source', 'target',
            'idtronc', 'geometry','tmjo_2_sens', 'type_cpt','id_cpt_exp']].to_file(fichier)
 
 """##########################
@@ -259,7 +259,7 @@ def export_cpt_ponct_linearises(gdf_traf_tot,fichier) :
                     if isinstance(x['id_cpt_2_sens'],tuple) else str(x['id_cpt_2_sens']), axis=1)
     gdf_traf_tot.reset_index()[['id_x', 'ident', 'domanial', 'groupe', 'cat_dig', 'cat_rhv', 'passage',
            'rggraph_nd', 'rggraph_na', 'rgraph_dbl', 'numero', 'cdate', 'mdate',
-           'id_ign', 'nature', 'sens', 'codevoie_d', 'importance', 'id_y',
+           'id_ign', 'nature', 'sens', 'codevoie_d', 'importance', 'id_y','source', 'target',
            'idtronc', 'geometry','tmjo_2_sens','type_cpt', 'id_cpt_exp']].to_file(fichier)
 
     

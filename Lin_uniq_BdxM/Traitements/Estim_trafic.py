@@ -8,6 +8,7 @@ Module d'estimation des trafics à partir des trafic des points de comptages lin
 '''
 
 import pandas as pd
+import numpy as np
 from Outils import plus_proche_voisin,nb_noeud_unique_troncon_continu,verif_index
 from collections import Counter
 
@@ -32,52 +33,18 @@ def df_noeud_troncon(df_tot, noeud,df_noeud_tot):
     """
     determiner la dataframe des troncon en rapport avec un noeud, en se basant surla ligne du troncon concerne
     in : 
-        df_tot : dataframe des lignes contenant un idtronc, et ayant été modifié au niveau de noeud de rdpt (Simplifier_rdpt.maj_graph_rdpt())
-        noeud : integer : numero du noeud
+        df_tot : ataframe du filaire de voie avec rond point simplifie et idtroncon. issu de simplifier_noeud_rdpt
         df_noeud_tot : dataframe de l'ensemnle des noeuds, issus de noeud_fv_ligne_ss_trafic()
     out : 
         df_noeud : dataframe des tronc arrivant sur le noeud avec id_ign,noeud, tmjo_2_sens,cat_rhv,type_noeud,idtronc
     """
     df_temp=df_tot.loc[(df_tot['source']==noeud) | (df_tot['target']==noeud)].copy()
     df_temp['type_noeud']=df_temp.apply(lambda x : 'd' if x['source']==noeud else 'a', axis=1 )
-    df_noeud=df_noeud_tot.loc[df_noeud_tot['noeud']==noeud].merge(df_temp[['ident','id_ign','type_noeud', 'idtronc']], on='id_ign')
+    df_noeud=df_noeud_tot.loc[df_noeud_tot['noeud']==noeud].merge(df_temp[['ident','id_ign','type_noeud', 'idtronc', 'type_cpt']], on='id_ign')
     return df_noeud.drop_duplicates()
 
-def verif_double_sens(df, df_tot):
-    """
-    Vérifier si un troncon est en double sens ou non
-    in : 
-        df : dataframe des troncons relatifs à un noeud. issu de df_noeud_troncon()
-        df_tot : dataframe des lignes, sans modification des sources et target des rond points
-    """
-    
-    def nb_sens(rgraph_dbl,nb_noeud_unique,nb_noeud,nb_lgn_tch_noeud_unique,nb_ligne) : 
-        """
-        savoir si un troncon est en double sens ou non en fonction du nb de noeud, noeuds_uniques, lignes et lignes
-        qui touchent les noeuds uniques
-        """
-        if rgraph_dbl==0 :
-            if nb_noeud_unique > 2 :
-                if nb_lgn_tch_noeud_unique > 2 : 
-                    if nb_ligne==nb_noeud-1 : 
-                        return 0
-                    elif nb_ligne==nb_noeud-2 : 
-                        return 1
-                    else : return 1
-                elif nb_lgn_tch_noeud_unique == 2 :
-                    return 1
-            else : return 0
-        else: return 1
-    df.rgraph_dbl.fillna(1,inplace=True)
-    df['list_noeud_unique']=df.apply(lambda x : Troncon(df_tot, x['idtronc']).noeuds_uniques, axis=1) #liste des noeuds en fin de troncon['list_noeud_unique']=df_calcul.apply(lambda x : rt.Troncon(df_tot, x['idtronc']).noeuds_uniques, axis=1) #liste des noeuds en fin de troncon
-    df['nb_noeud_unique']=df.apply(lambda x : Troncon(df_tot, x['idtronc']).nb_noeuds_uniques, axis=1) #nb de noeud en fin de troncon
-    df['nb_noeud']=df.apply(lambda x : Troncon(df_tot, x['idtronc']).nb_noeuds, axis=1) #nb de noeud en fin de troncon
-    df['nb_lgn_tch_noeud_unique']=df.apply(lambda x : Troncon(df_tot, x['idtronc']).nb_lgn_tch_noeud_unique, axis=1) 
-    df['nb_lgn']=df.apply(lambda x : Troncon(df_tot, x['idtronc']).nb_lgn, axis=1)
-    #ajout d'un attribut supplémentaire
-    df['rgraph_dbl_2']=df.apply(lambda x : nb_sens(x['rgraph_dbl'],x['nb_noeud_unique'],x['nb_noeud'],x['nb_lgn_tch_noeud_unique'],x['nb_lgn']), axis=1)
 
-def trouver_noeud_parrallele(Troncon,graph, noeud,distance):
+def trouver_noeud_parrallele(Troncon,noeud,distance):
     """
     pour les troncon a 2*2 voies, trouver s'il existe un autre noeud assimilibale au 1er
     in : 
@@ -90,7 +57,7 @@ def trouver_noeud_parrallele(Troncon,graph, noeud,distance):
     """
     if not Troncon.noeuds_uniques : #ca veut dire qu'une 2 fois 2 voies se termine de par et d'autre par un rd pt
         return None 
-    corresp_noeud_uniq=Troncon.groupe_noeud_route_2_chaussees(graph,distance)
+    corresp_noeud_uniq=Troncon.groupe_noeud_route_2_chaussees(distance)
     try :
         noeud_parrallele=corresp_noeud_uniq.loc[corresp_noeud_uniq['id_left']==noeud].id_right.values[0]
         return noeud_parrallele
@@ -98,26 +65,26 @@ def trouver_noeud_parrallele(Troncon,graph, noeud,distance):
         return None
     
 
-def carac_troncon_noeud(df_rdpt_simple, df_tot, graph,num_noeud,df_noeuds):
+def carac_troncon_noeud(df_rdpt_simple, df_tot, graph,num_noeud,df_noeuds, lgn_rdpt):
     """
-    verifier que les voies représetées par 2 lignes ne croise bien que 2 autres troncons. 
-    Cette vérif est due à l'analyse par noeud : pour une 2*2 voies il y a 4 noeuds de fin, dc on pourrait louper des lignes
+    Caractériser les troncons qui arrivent sur un noeud
     in : 
         df_rdpt_simple : ataframe du filaire de voie avec rond point simplifie et idtroncon
         df_tot : df du filaire sans modif des ronds points
         graoh : table des vertex du graph sans modif liées au rond points. cf classe Troncon fonction groupe_noeud_route_2_chaussees()
         num_noeud : integer : numero du noeud du carrefour
         df_noeuds : df de tout les oeuds, issu de noeuds_estimables()
+        lgn_rdpt : df des lignes constituant les rd points, cf module Rond Points, du projet otv, dossier Base Bdtopo
     out : 
         df_tronc_finale : df des tronncon arrivant sur un noeud, toutes voies confodues (prise en compte 2*2 voies)
     """
     df_troncon_noeud=df_noeud_troncon(df_rdpt_simple, num_noeud,df_noeuds)
-    verif_double_sens(df_troncon_noeud,df_tot)
+    df_troncon_noeud['rgraph_dbl_2']=df_troncon_noeud.apply(lambda x : 1 if Troncon(df_rdpt_simple,df_tot,x['idtronc'],lgn_rdpt,graph).double_sens else 0, axis=1)
     list_troncon_suspect=df_troncon_noeud.loc[(df_troncon_noeud['rgraph_dbl']==0) & (df_troncon_noeud['rgraph_dbl_2']==1)].idtronc.tolist()
     if list_troncon_suspect :
         for t in  list_troncon_suspect : 
-            noeud_parrallele=trouver_noeud_parrallele(Troncon(df_rdpt_simple,t),graph, num_noeud,100)
-            if not noeud_parrallele : #ca veut dire qu'une 2 fois 2 voies se termine de par et d'autre par un rd pt
+            noeud_parrallele=trouver_noeud_parrallele(Troncon(df_rdpt_simple,df_tot,t,lgn_rdpt,graph), num_noeud,30)
+            if not noeud_parrallele or noeud_parrallele not in df_noeuds.noeud.tolist() :
                 continue
             #trouver les troncon qui intersectent ce troncon sur le debut ou la fin et qui n'ont pas été fléchés au début
             df_troncons_sup=df_tot.loc[((df_tot['source']==noeud_parrallele) | (df_tot['target']==noeud_parrallele)) & 
@@ -126,14 +93,27 @@ def carac_troncon_noeud(df_rdpt_simple, df_tot, graph,num_noeud,df_noeuds):
             df_troncon_noeud_sup=df_troncon_noeud_sup.loc[df_troncon_noeud_sup.idtronc.isin(df_troncons_sup)].copy()
             if df_troncon_noeud_sup.empty : 
                 continue
-            verif_double_sens(df_troncon_noeud_sup,df_tot)
+            df_troncon_noeud_sup['rgraph_dbl_2']=df_troncon_noeud_sup.apply(lambda x : 1 if Troncon(df_rdpt_simple,df_tot,x['idtronc'],lgn_rdpt,graph).double_sens else 0, axis=1)
             df_tronc_finale=pd.concat([df_troncon_noeud,df_troncon_noeud_sup], axis=0, sort=False).drop_duplicates('idtronc')
         try :
-            return df_tronc_finale
+            return df_tronc_finale.reset_index().drop('index',axis=1) #pour avoir un index unique
         except UnboundLocalError : 
-            return df_troncon_noeud
+            return df_troncon_noeud.drop_duplicates('idtronc').reset_index().drop('index',axis=1)
     else : 
-        return df_troncon_noeud
+        return df_troncon_noeud.drop_duplicates('idtronc').reset_index().drop('index',axis=1)
+
+def dico_troncons_noeud(df_troncon_noeud,gdf_rhv_rdpt_simple,gdf_base,lgn_rdpt,graph_filaire_123_vertex ):
+    """
+    creer un dico avec en clé l'ditronc et en value les objets Troncon correspondants
+    in : 
+        df_troncon_noeud : df issue de carac_troncon_noeud()
+        gdf_rhv_rdpt_simple : ataframe du filaire de voie avec rond point simplifie et idtroncon
+        gdf_base : df du filaire sans modif des ronds points
+        graph_filaire_123_vertex : table des vertex du graph sans modif liées au rond points. cf classe Troncon fonction groupe_noeud_route_2_chaussees()
+        num_noeud : integer : numero du noeud du carrefour
+        lgn_rdpt : df des lignes constituant les rd points, cf module Rond Points, du projet otv, dossier Base Bdtopo
+    """
+    return {a:Troncon(gdf_rhv_rdpt_simple,gdf_base,a,lgn_rdpt,graph_filaire_123_vertex) for a in  df_troncon_noeud.idtronc.tolist()}
 
 def type_estim(df_troncon_noeud):
     """
@@ -143,8 +123,12 @@ def type_estim(df_troncon_noeud):
     out : 
         type_estim : string : 'calcul_3_voies' ou 'MMM'
     """
-    if (len(df_troncon_noeud.idtronc.unique()) == 3 and 
-        len(df_troncon_noeud.loc[df_troncon_noeud['tmjo_2_sens']==-99].idtronc.unique())==1) : 
+    df_calcul_trafic_exist,df_calcul_trafic_null=separer_troncon_a_estimer(df_troncon_noeud)
+    if ((len(df_troncon_noeud.idtronc.unique()) == 3 and # cas simple en ville
+        len(df_troncon_noeud.loc[df_troncon_noeud['tmjo_2_sens']==-99].idtronc.unique())==1) or 
+         (len(df_calcul_trafic_null)== 1  and  len(df_calcul_trafic_exist)%2==0 and #cas des bretelles d'autoroute
+        len(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'])%2==0 and 
+         len(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'])%2==0 ) ): 
         return 'calcul_3_voies'
     else : return 'MMM'
 
@@ -175,37 +159,64 @@ def maj_trafic_3tronc(df):
         #calcul selon les cas de sens unique ou non
         if (df_calcul_trafic_exist.rgraph_dbl_2==0).all() : 
             if len(df_calcul_trafic_exist.type_noeud.unique())==1 : 
-                return df_calcul_trafic_exist.tmjo_2_sens.sum()
+                trafic=df_calcul_trafic_exist.tmjo_2_sens.sum()
             else : 
-                if (df_calcul_trafic_null.type_noeud=='a').all() :
-                    return (df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'].tmjo_2_sens.values[0] - 
-                            df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'].tmjo_2_sens.values[0])
-                else :
-                    return (df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'].tmjo_2_sens.values[0] - 
-                     df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'].tmjo_2_sens.values[0])
+                if (df_calcul_trafic_null.rgraph_dbl_2==0).all() :
+                    if (df_calcul_trafic_null.type_noeud=='a').all() :
+                        trafic=(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'].tmjo_2_sens.values[0] - 
+                                df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'].tmjo_2_sens.values[0])
+                    else :
+                        trafic=(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'].tmjo_2_sens.values[0] - 
+                         df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'].tmjo_2_sens.values[0])
+                else : #─ dans ce cas les lignes de trafic existante sont forcementg une arrivee et un depart, sinon celui que l'on cherche ne serait pas double sens
+                    if len(df_calcul_trafic_exist)==2 : #cas de voies simple en agglo
+                        trafic=(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'].tmjo_2_sens.values[0]/2+
+                                df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'].tmjo_2_sens.values[0]-
+                                df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'].tmjo_2_sens.values[0]/2)
+                    elif (len(df_calcul_trafic_exist)%2==0 and #cas des bretelles d'autoroute
+                          len(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'])%2==0 and 
+                          len(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'])%2==0):
+                        trafic=df_calcul_trafic_exist.tmjo_2_sens.sum()
+                    else : 
+                        trafic=-999999999
         elif (df_calcul_trafic_exist.rgraph_dbl_2!=0).all() :
-            return df_calcul_trafic_exist.tmjo_2_sens.max()-df_calcul_trafic_exist.tmjo_2_sens.min()
+            trafic=df_calcul_trafic_exist.tmjo_2_sens.max()-df_calcul_trafic_exist.tmjo_2_sens.min()
         else : 
             if (df_calcul_trafic_null.rgraph_dbl_2==1).all() : 
-                return df_calcul_trafic_exist.loc[df_calcul_trafic_exist['rgraph_dbl_2']==1].tmjo_2_sens.values[0]
+                trafic=df_calcul_trafic_exist.loc[df_calcul_trafic_exist['rgraph_dbl_2']==1].tmjo_2_sens.values[0]
+            else : 
+                trafic=-999999999
+        if trafic<50 and trafic !=-999999999 : 
+            return -99, "estim_manuelle"
+        elif trafic ==-999999999 : 
+            return trafic, "estim_a_travailer"
+        else : return trafic, "estim_calcul_3_voies"
     
     if df.reset_index().duplicated('index').any() : #inon on peut avoir une errur si le numero d'index est dupliqué
         df=df.reset_index().drop('index',axis=1)
-    df.loc[df['tmjo_2_sens']==-99,'tmjo_2_sens']=df.apply(lambda x : calcul_trafic_manquant_3troncons(
-        df), axis=1)
+    df.loc[df['tmjo_2_sens']==-99,'type_cpt']=df.loc[df['tmjo_2_sens']==-99].apply(lambda x : calcul_trafic_manquant_3troncons(df)[1], axis=1)
+    df.loc[df['tmjo_2_sens']==-99,'tmjo_2_sens']=df.loc[df['tmjo_2_sens']==-99].apply(lambda x : calcul_trafic_manquant_3troncons(df)[0], axis=1)
         
-def matrice_troncon_noeud_rhv(df_troncon_noeud,lgn_rdpt) :
+def matrice_troncon_noeud_rhv(df_troncon_noeud,num_noeud,lgn_rdpt,dico_troncons_noeud) :
     """
     df des lignes arrivant sur un noeud, avec la ligne de départ en face
     in : 
-        df_troncon_noeud : df issue de carac_troncon_noeud()
-        lgn_rdpt : df des lignes appartenenat a un rond point. issu de la dmearche interne de simplification des troncon
+        dico_troncons_noeud : dico des objets Troncons, cf dico_troncons_noeud()
+        num_noeud : integer : numero du noeud du carrefour
+        lgn_rdpt : df des lignes constituant les rd points, cf module Rond Points, du projet otv, dossier Base Bdtopo
     out : 
         tab_corresp_rhv : la df issue du cross join des lignes de df_troncon_noeud, filtree
     """
     #filtrer les lignes des rd pt
-    df_troncon_noeud2=df_troncon_noeud.loc[~df_troncon_noeud.ident.isin(lgn_rdpt.ident.tolist())].copy()
-    cross_join=df_troncon_noeud2.assign(key=1).merge(df_troncon_noeud2.assign(key=1),on="key").drop("key", axis=1)
+    if any([a in lgn_rdpt.id_ign.tolist() for a in df_troncon_noeud.id_ign.tolist()]) : 
+        idtronc=df_troncon_noeud.loc[[a in lgn_rdpt.id_ign.tolist() for a in df_troncon_noeud.id_ign.tolist()]].idtronc.to_numpy()[0]
+        
+        ident=dico_troncons_noeud[idtronc].lgn_ss_rdpt.loc[(dico_troncons_noeud[idtronc].lgn_ss_rdpt['source']==num_noeud) | 
+                                                           (dico_troncons_noeud[idtronc].lgn_ss_rdpt['target']==num_noeud)].ident.to_numpy()[0]
+        df_troncon_noeud.loc[df_troncon_noeud['idtronc']==idtronc,'ident']=ident
+        df_troncon_noeud.loc[df_troncon_noeud['idtronc']==idtronc,'id_ign']='TRONROUT'+str(ident)
+        
+    cross_join=df_troncon_noeud.assign(key=1).merge(df_troncon_noeud.assign(key=1),on="key").drop("key", axis=1)
     cross_join['filtre']=cross_join.apply(lambda x : tuple(sorted((x['ident_x'],x['ident_y']))),axis=1)
     cross_join.drop_duplicates('filtre', inplace=True)
     tab_corresp_rhv=cross_join.loc[cross_join['ident_x']!=cross_join['ident_y']].drop('filtre',axis=1).copy()[['ident_x',
@@ -366,39 +377,51 @@ class Troncon(object):
         noeuds_uniques, noeuds : lists des noeuds de fin de troncon et des noeuds du troncon
         nb_noeuds_uniques, nb_noeuds : nombre de noeuds et de noeud de fin de traoncon
         df_lign_fin_tronc : dataframe des lignes de fin de troncon
+        rd_pt_flag : booleen : traduit si le troncon comporte un rond point
+        df_lgn_rdpt : df des lignes faisant partuie d'un rond point
+        nb_lgn_ss_rdpt : nombre de lignes sans celles constituant un rd pt
+        double_sens : booleen : traduit si troncon en double sens ou non
     """
-    def __init__(self, df_fv, num_tronc):
+    def __init__(self, df_rdpt_simple,df_tot, num_tronc, lgn_rdpt, graph_tot_vertex):
         """
         constrcuteur
         in : 
-            df_fv  : dataframe du filaire de voie avec rond point simplifie et idtroncon
+            df_rdpt_simple  : dataframe du filaire de voie avec rond point simplifie et idtroncon
+            df_tot : dataframe du filaire de voie sans simplification des rond point
+            graph_tot : vertex du graph associe à df_tot (typiquement la table xxxx_vertices_pgr dans pg_routing, avaec analyze graph
             num_tronc : numero du troncon
+            lgn_rdpt : df des lignes constituant les rd points, cf module Rond Points, du projet otv, dossier Base Bdtopo
         """
         self.id=num_tronc
-        self.df_lgn=df_fv.loc[df_fv['idtronc']==num_tronc].copy()
+        self.graph_tot_vertex=graph_tot_vertex
+        self.df_lgn=df_rdpt_simple.loc[df_rdpt_simple['idtronc']==num_tronc].copy()
         self.nb_lgn=len(self.df_lgn)
-        self.noeuds_uniques, self.noeuds=nb_noeud_unique_troncon_continu(df_fv,num_tronc,'idtronc')
+        self.noeuds_uniques_simplifie, self.noeuds_simplifie=nb_noeud_unique_troncon_continu(df_rdpt_simple,num_tronc,'idtronc')
+        self.noeuds_uniques, self.noeuds=nb_noeud_unique_troncon_continu(df_tot,num_tronc,'idtronc')
+        self.nb_noeuds_simplifie, self.nb_noeuds_uniques_simplifie=len(self.noeuds_simplifie), len(self.noeuds_uniques_simplifie)
         self.nb_noeuds, self.nb_noeuds_uniques=len(self.noeuds), len(self.noeuds_uniques)
-        self.df_lign_fin_tronc=df_fv.loc[((df_fv['source'].isin(self.noeuds_uniques)) | (df_fv['target'].isin(self.noeuds_uniques))) & 
-                       (df_fv['idtronc']==num_tronc)]
-        self.nb_lgn_tch_noeud_unique=len(self.df_lign_fin_tronc)
+        self.df_lign_fin_tronc_simplifie=df_rdpt_simple.loc[((df_rdpt_simple['source'].isin(self.noeuds_uniques_simplifie)) | (df_rdpt_simple['target'].isin(self.noeuds_uniques_simplifie))) & 
+                       (df_rdpt_simple['idtronc']==num_tronc)]
+        self.nb_lgn_tch_noeud_unique_simplifie=len(self.df_lign_fin_tronc_simplifie)
+        self.rd_pt_flag, self.df_lgn_rdpt, self.nb_lgn_ss_rdpt, self.lgn_ss_rdpt=self.rond_points(lgn_rdpt)
+        self.double_sens=self.double_sens()
     
-    def troncon_touche(self,df_fv):
+    def troncon_touche(self,df_rdpt_simple):
         """
         trouver les troncons qui touchent, avec la valeur du noeud d'intersection
         in : 
-            df_fv : dataframe du filaire de voie avec rond point simplifie et idtroncon
+            df_rdpt_simple : dataframe du filaire de voie avec rond point simplifie et idtroncon
         out : 
             df_tronc_tch : dataframe avec idtronc et noeud
         """
-        df_tronc_tch=df_fv.loc[((df_fv['source'].isin(self.noeuds_uniques)) | (df_fv['target'].isin(self.noeuds_uniques))) & 
-                        (df_fv['idtronc']!=self.id)]
+        df_tronc_tch=df_rdpt_simple.loc[((df_rdpt_simple['source'].isin(self.noeuds_simplifie_uniques_simplifie)) | (df_rdpt_simple['target'].isin(self.noeuds_simplifie_uniques_simplifie))) & 
+                        (df_rdpt_simple['idtronc']!=self.id)]
         df_tronc_tch=pd.concat([df_tronc_tch[['idtronc','source']].rename(columns={'source':'noeud'}),
                                 df_tronc_tch[['idtronc','target']].rename(columns={'target':'noeud'})], axis=0, sort=False)
-        df_tronc_tch=df_tronc_tch.loc[df_tronc_tch['noeud'].isin(self.noeuds_uniques)].copy()
+        df_tronc_tch=df_tronc_tch.loc[df_tronc_tch['noeud'].isin(self.noeuds_simplifie_uniques_simplifie)].copy()
         return df_tronc_tch
     
-    def groupe_noeud_route_2_chaussees (self, graph, distance):
+    def groupe_noeud_route_2_chaussees (self, distance):
         """
         pour un troncon constitue d'une voie a 2 chaussee, obtenirune correspondance entre les 4 noeuds uniques, en les groupant 2 par 2
         in : 
@@ -407,9 +430,44 @@ class Troncon(object):
         out : 
             corresp_noeud_uniq : df avec les id a associer
         """
-        df_noeud_uniq=graph.loc[(graph['id'].isin(self.noeuds_uniques))]
+        df_noeud_uniq=self.graph_tot_vertex.loc[(self.graph_tot_vertex['id'].isin(self.noeuds_uniques))]
         corresp_noeud_uniq=plus_proche_voisin(df_noeud_uniq, df_noeud_uniq, distance, 'id', 'id', True)
         return corresp_noeud_uniq
+    
+    def rond_points(self,lgn_rdpt):
+        """
+        savoir si le troncon contient un rond point ou non
+        in :
+            lgn_rdpt : df des lignes constituant les rd points, cf module Rond Points, du projet otv, dossier Base Bdtopo
+        out : 
+            rd_pt_flag : booleen : traduit si un rdpoint est dans le troncon
+            df_rdpt : df des lignes constituant le rdpt
+            nb_lgn_ss_rdpt : nombre de ligne sans celles qui constituent le rdpoints
+        """
+        df_lgn_rdpt=self.df_lgn.loc[self.df_lgn.ident.isin(lgn_rdpt.ident.tolist())]
+        lgn_ss_rdpt=self.df_lgn.loc[~self.df_lgn.ident.isin(lgn_rdpt.ident.tolist())]
+        if not df_lgn_rdpt.empty : 
+            return True, df_lgn_rdpt, len(lgn_ss_rdpt), lgn_ss_rdpt
+        else : return False, pd.DataFrame(),self.nb_lgn, self.df_lgn
+    
+    def double_sens(self):
+        """
+        savoir si le troncon est double sens ou non
+        """
+        if (self.df_lign_fin_tronc_simplifie.rgraph_dbl==0).all() : 
+            if all([a in self.groupe_noeud_route_2_chaussees(100).id_left.tolist() for a in self.noeuds_uniques]) and self.nb_lgn>1 and self.nb_noeuds_uniques>2 :
+                return True
+            else : 
+                if self.rd_pt_flag :
+                    if self.nb_lgn_ss_rdpt<=self.nb_noeuds_simplifie-1 :
+                        return True
+                    else : 
+                        return False
+                else: return False
+        elif (self.df_lign_fin_tronc_simplifie.rgraph_dbl==1).all() : 
+            return True
+        else :
+            return True
     
     
 class PasDeTraficError(Exception):
