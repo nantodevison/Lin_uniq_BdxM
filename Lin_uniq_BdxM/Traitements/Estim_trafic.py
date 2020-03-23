@@ -102,7 +102,7 @@ def carac_troncon_noeud(df_rdpt_simple, df_tot, graph,num_noeud,df_noeuds, lgn_r
     else : 
         return df_troncon_noeud.drop_duplicates('idtronc').reset_index().drop('index',axis=1)
 
-def dico_troncons_noeud(df_troncon_noeud,gdf_rhv_rdpt_simple,gdf_base,lgn_rdpt,graph_filaire_123_vertex ):
+def creer_dico_troncons_noeud(df_troncon_noeud,gdf_rhv_rdpt_simple,gdf_base,lgn_rdpt,graph_filaire_123_vertex ):
     """
     creer un dico avec en clé l'ditronc et en value les objets Troncon correspondants
     in : 
@@ -201,7 +201,7 @@ def matrice_troncon_noeud_rhv(df_troncon_noeud,num_noeud,lgn_rdpt,dico_troncons_
     """
     df des lignes arrivant sur un noeud, avec la ligne de départ en face
     in : 
-        dico_troncons_noeud : dico des objets Troncons, cf dico_troncons_noeud()
+        dico_troncons_noeud : dico des objets Troncons, cf creer_dico_troncons_noeud()
         num_noeud : integer : numero du noeud du carrefour
         lgn_rdpt : df des lignes constituant les rd points, cf module Rond Points, du projet otv, dossier Base Bdtopo
     out : 
@@ -266,7 +266,7 @@ def isoler_trafic_inconnu(joint_fv_mmm_e2):
                                                             groupby('idtronc_a_estim').diff_cat.transform(min)]
     return trafic_inconnus_prior_cat
 
-def trafic_mmm(trafic_inconnus_prior_cat,mmm_simple,noeud, graph,df_rdpt_simple,cle_mmm_rhv):
+def trafic_mmm(gdf_calcul,trafic_inconnus_prior_cat,mmm_simple,cle_mmm_rhv, df_troncon_noeud,dico_troncons_noeud):
     """
     associer les trafc MMM aux voies rhv d'un noeud
     in : 
@@ -279,7 +279,7 @@ def trafic_mmm(trafic_inconnus_prior_cat,mmm_simple,noeud, graph,df_rdpt_simple,
     """
     def trafic_reference_mmm(tmjo_2_sens_x,tmjo_2_sens_y, df, idtronc_x,idtronc_y) : 
         """
-        trouver le tmjo ode reference du mmm pour le calcul des trafic manquants,si plueisuers lignes possible
+        trouver le tmjo de reference du mmm pour le calcul des trafic manquants,si plueisuers lignes possible
         in : 
            tmjo_2_sens_x : float : trafic issu du filaire prealablement renseigne
            tmjo_2_sens_y : float : trafic issu du filaire prealablement renseigne
@@ -294,22 +294,7 @@ def trafic_mmm(trafic_inconnus_prior_cat,mmm_simple,noeud, graph,df_rdpt_simple,
             df_traf_ref=df.loc[(df['idtronc_y']==idtronc_x) | (df['idtronc_x']==idtronc_x) ].copy()
             df_traf_ref['traf_ref']=df_traf_ref.apply(lambda x : x['tmja_tv_x'] if x['tmjo_2_sens_y']==-99 else x['tmja_tv_y'],axis=1)
             return df_traf_ref.traf_ref.max()
-    
-    def ajout_tmja(idtronc, tmja_base, noeud) : 
-        """
-        Pour les voies du MMM qui sont représentées par 2 lignes il faut ajouter les 2 trafics pour le troncon
-        """
-        troncon=Troncon(df_rdpt_simple,idtronc)
-        noeud_parrallele=trouver_noeud_parrallele(troncon,graph, noeud,100)
-        #trouver les lignes du troncon qui intersectent ce noeud
-        lign_fin=troncon.df_lign_fin_tronc.loc[(troncon.df_lign_fin_tronc['source']==noeud_parrallele) | (troncon.df_lign_fin_tronc['target']==noeud_parrallele)]
-        #jointure avec les données MMM
-        trafc_mmm_sup=lign_fin[['idtronc','ident']].merge(cle_mmm_rhv[['NO','ident']], on='ident').merge(mmm_simple[['NO','tmja_tv']], on='NO')
-        if trafc_mmm_sup.empty : 
-            return tmja_base
-        else : 
-            return tmja_base+trafc_mmm_sup.tmja_tv.sum()
-    
+      
     def somme_traf(idtronc, traf_rens) : 
         """
         pour les voies du MMM représenté par une ligne qui se sépare en 2 dur la fin (rd point par exemple))
@@ -325,10 +310,28 @@ def trafic_mmm(trafic_inconnus_prior_cat,mmm_simple,noeud, graph,df_rdpt_simple,
         raise PasDeTraficError(troncon_mmm_sstraf)
     traf_mmm=trafic_inconnus_prior_cat.merge(mmm_simple[['NO','tmja_tv']], left_on='NO_x', right_on='NO').drop('NO', axis=1).merge(
     mmm_simple[['NO','tmja_tv']], left_on='NO_y', right_on='NO').drop('NO', axis=1)
-    #mise a jour des trafic mmm si 2*2voies MMM
-    if traf_mmm.apply(lambda x : ','.join([str(x['idtronc_x']),str(x['idtronc_y'])]),axis=1).nunique()!=len(traf_mmm) :
-        traf_mmm['tmja_tv_x']=traf_mmm.apply(lambda x : ajout_tmja(x['idtronc_x'], x['tmja_tv_x'], noeud),axis=1)
-        traf_mmm['tmja_tv_y']=traf_mmm.apply(lambda x : ajout_tmja(x['idtronc_y'], x['tmja_tv_y'], noeud),axis=1)
+    
+    #mise a jour des trafic mmm si 2*2voies MMM :
+    df_tronc_suspect=df_troncon_noeud.loc[(df_troncon_noeud['rgraph_dbl']==0) & (df_troncon_noeud['rgraph_dbl_2']==1)]
+    if df_tronc_suspect.idtronc.tolist() : 
+        for i,ts in enumerate(df_tronc_suspect.idtronc.tolist()) :
+            #le noeud parrallèle
+            noeud_par=trouver_noeud_parrallele(dico_troncons_noeud[ts],df_tronc_suspect.iloc[i].noeud,40)
+            if not noeud_par : #peut etre le cas d'une 2*2 terminéee par un rd pt
+                if dico_troncons_noeud[ts].rd_pt_flag : 
+                    df_noeud_par=dico_troncons_noeud[ts].groupe_noeud_route_2_chaussees_rd_pt(40)
+                    lgn_sup=gdf_calcul.loc[((gdf_calcul.source.isin(df_noeud_par.id_left.tolist())) | (gdf_calcul.source.isin(df_noeud_par.id_left.tolist()))) & 
+                                   (~gdf_calcul.ident.isin(df_troncon_noeud.ident.tolist())) & (~gdf_calcul.ident.isin(dico_troncons_noeud[ts].df_lgn_rdpt.ident.tolist()))].ident.to_numpy()[0]
+            #lignes rhv qui touchent ce noeud et uqui ont le mm idtrronc
+            else : lgn_sup=gdf_calcul.loc[(gdf_calcul['idtronc']==ts) & ((gdf_calcul['source']==noeud_par) | (gdf_calcul['target']==noeud_par))].ident.to_numpy()[0]
+            #equivalent mmm
+            lgn_sup_mmm=cle_mmm_rhv.loc[cle_mmm_rhv['ident']==lgn_sup].NO.to_numpy()[0]
+            #test si ligne et idtronc deja presents dans traficrens
+            if not any(((traf_mmm['NO_x']==lgn_sup_mmm) & (traf_mmm['idtronc_x']==ts)) | ((traf_mmm['NO_y']==lgn_sup_mmm) & (traf_mmm['idtronc_y']==ts))) :
+                traf_ajout=mmm_simple.loc[mmm_simple['NO']==lgn_sup_mmm].tmja_tv.to_numpy()[0]
+                traf_mmm['tmja_tv_x']=traf_mmm.apply(lambda x : x['tmja_tv_x']+traf_ajout if x['idtronc_x']==ts else x['tmja_tv_x'], axis=1)
+                traf_mmm['tmja_tv_y']=traf_mmm.apply(lambda x : x['tmja_tv_y']+traf_ajout if x['idtronc_y']==ts else x['tmja_tv_y'], axis=1) 
+            
     #ensuite on refait un test dans le cas par exemple des rd pt pour lesquels les voies se séparent à la fin
     traf_mmm2=traf_mmm.copy()
     traf_mmm2['tmja_tv_x']=traf_mmm2.apply(lambda x : somme_traf(x['idtronc_x'], traf_mmm),axis=1)
@@ -373,6 +376,7 @@ class Troncon(object):
     attribut : 
         id : identifiant 
         df_lgn : dataframe des lignes qui constituent le troncon
+        df_tot : df des lignes totales du jdd contenant le tronc,sans simplification des rdpts
         nb_lgn : nb de ligne du troncon,
         noeuds_uniques, noeuds : lists des noeuds de fin de troncon et des noeuds du troncon
         nb_noeuds_uniques, nb_noeuds : nombre de noeuds et de noeud de fin de traoncon
@@ -393,6 +397,7 @@ class Troncon(object):
             lgn_rdpt : df des lignes constituant les rd points, cf module Rond Points, du projet otv, dossier Base Bdtopo
         """
         self.id=num_tronc
+        self.df_tot=df_tot
         self.graph_tot_vertex=graph_tot_vertex
         self.df_lgn=df_rdpt_simple.loc[df_rdpt_simple['idtronc']==num_tronc].copy()
         self.nb_lgn=len(self.df_lgn)
@@ -449,6 +454,18 @@ class Troncon(object):
         if not df_lgn_rdpt.empty : 
             return True, df_lgn_rdpt, len(lgn_ss_rdpt), lgn_ss_rdpt
         else : return False, pd.DataFrame(),self.nb_lgn, self.df_lgn
+    
+    def groupe_noeud_route_2_chaussees_rd_pt(self,distance):
+        """
+        pour une 2*2 voies arriavnt sur un rd pt, si on veut connaitre les noeud de la 2*2 intersectant le rd pt
+        """
+        noeud_uniq=nb_noeud_unique_troncon_continu(self.df_tot.loc[self.df_tot.ident.isin(self.lgn_ss_rdpt.ident.tolist())], self.id, 'idtronc')[0]
+        print(noeud_uniq)
+        df_noeud_uniq=self.graph_tot_vertex.loc[(self.graph_tot_vertex['id'].isin(noeud_uniq))]
+        corresp_noeud_uniq=plus_proche_voisin(df_noeud_uniq, df_noeud_uniq, distance, 'id', 'id', True)
+        df_lgn_rdpt=self.df_tot.loc[self.df_tot.ident.isin(self.df_lgn_rdpt.ident.tolist())]
+        corresp_noeud_uniq=corresp_noeud_uniq.loc[corresp_noeud_uniq.id_left.isin(df_lgn_rdpt.source.tolist()+df_lgn_rdpt.target.tolist())].copy()
+        return corresp_noeud_uniq
     
     def double_sens(self):
         """
