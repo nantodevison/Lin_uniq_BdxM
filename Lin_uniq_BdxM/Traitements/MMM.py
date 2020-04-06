@@ -55,3 +55,16 @@ fichier_src_simpl_2019=fichier_src_simpl_2019.loc[fichier_src_simpl_2019.apply(l
 fichier_src_simpl_2019['tmja_tv']=fichier_src_simpl_2019.Q_Jour_TV+fichier_src_simpl_2019.R_Q_Jour_TV
 #export
 fichier_src_simpl_2019.to_file(r'D:\temp\Linearisation_BM\C19SA0101\C19SA0101\Doc_travail\Donnees_source\MMM\MMM_Maj_EDA2017\simplifie\MMM_simple_2019.shp')
+
+def import_fichiers_mmm(fichier_simple, fichier_correpondance):
+    """
+    ouvrir les fichiers relatifs au MMM : 
+    in : 
+        fichier_simple : fichier du mmm avec rergouepemnt des attributs de trafic et simpmlification du nb d'attributs
+        fichier_correpondance : fichiers permettant le lien entre les lignes du rhv et les lignes du mmm
+    """
+    mmm_simple=gp.read_file(fichier_simple)
+    cle_mmm_rhv=gp.read_file(fichier_correpondance)
+    return mmm_simple, cle_mmm_rhv
+    
+    

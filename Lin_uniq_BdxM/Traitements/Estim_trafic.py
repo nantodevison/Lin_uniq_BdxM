@@ -10,7 +10,31 @@ Module d'estimation des trafics à partir des trafic des points de comptages lin
 import pandas as pd
 import numpy as np
 from Outils import plus_proche_voisin,nb_noeud_unique_troncon_continu,verif_index
+from datetime import datetime
 from collections import Counter
+
+
+#quelques troncons dont les valeurs sont soit connues soit à imposer à -99 après calcul
+#utilisé dans la fonction calculer_trafic_3voies
+dico_corection_calcul_3_voies=[[25, 6000, 'mano'],[27, 500, 'mano'],[133, 5000, 'mano'],[155, 5000, 'mano'],[183, 5000, 'mano'],[186, 5000, 'mano'],[190, 15000, 'mano'],[191, 5000, 'mano'],[423, 6000, 'mano'],[425, 9000, 'mano'],
+[450, 120000, 'mano'],[503, 500, 'mano'],[505, 110000, 'mano'],[524, 100000, 'mano'],[529, 300, 'mano'],[530, 11000, 'mano'],[542, 110000, 'mano'],[545, 10000, 'mano'],[553, 5000, 'mano'],
+[582, -99],[606, 200, 'mano'],[653, 1000, 'mano'],[709, 100000, 'mano'],[849, 5000, 'mano'],[939, -99],[1015, 2000, 'mano'],[1041, 6000, 'mano'],[1124, 1000, 'mano'],[1192, -99],
+[1206, 1000, 'mano'],[1236, 8000, 'mano'],[1254, 300, 'mano'],[1281, 7000, 'mano'],[1308, 1000, 'mano'],[1468, 2000, 'mano'],[1484, 3000, 'mano'],[1524, 1000, 'mano'],[1548, 9000, 'mano'],
+[1601, -99],[1679, -99],[1926, 3000, 'mano'],[1939, 45000, 'mano'],[2112, -99],[2136, 16000, 'mano'],[2168, 1000, 'mano'],[2179, -99],[2240, 2000, 'mano'],[2253, 800, 'mano'],
+[2271, 2000, 'mano'],[2280, 3000, 'mano'],[2477, 1500, 'mano'],[2560, 10000, 'mano'],[2577, 1000, 'mano'],[2658, 25000, 'mano'],[2713, 20000, 'mano'],[2789, 20000, 'mano'],[3126, 20000, 'mano'],
+[3163, 45000, 'mano'],[3224, 3000, 'mano'],[3254, 12000, 'mano'],[3311, 10000, 'mano'],[3379, 5000, 'mano'],[3510, 5000, 'mano'],[3740, 6000, 'mano'],[3902, 5000, 'mano'],
+[3913, 3000, 'mano'],[4081, 10000, 'mano'],[4128, 500, 'mano'],[4256, 1000, 'mano'],[4525, 50000, 'mano'],[4559, 500, 'mano'],[4699, 10000, 'mano'],[4831, 6000, 'mano'],[5101, 6000, 'mano'],
+[5177, 1000, 'mano'],[5486, 10000, 'mano'],[6008, 300, 'mano'],[6322, 100, 'mano'],[6580, 6000, 'mano'],[6661, 4000, 'mano'],[6971, 40000, 'mano'],[7209, 2000, 'mano'],
+[7323, 6000, 'mano'],[7392, 1000, 'mano'],[7503, 1942, 'mano'],[7889, 16000, 'mano'],[8368, 14000, 'mano'],[9719, 1000, 'mano'],[9899, 300, 'mano'],[10098, 16000, 'mano'],
+[10667, 17000, 'mano'],[12864, 8000, 'mano'],[13210, 3000, 'mano'],[13219, 20000, 'mano'],[13241, -99, 'mano'],[2792333, 1000, 'mano'],
+[2792334, 30000, 'mano'],[2792338, 1000, 'mano'],[2792339, 7000, 'mano'],[97,1500,'mano'],[4492,5500, 'mano'],[2409,500,'mano'],[1539,7929,'mano'], [507,5000,'mano']]
+df_corection_calcul_3_voies=pd.DataFrame.from_records(dico_corection_calcul_3_voies, columns=['idtronc','tmjo_2_sens', 'type_cpt']).set_index('idtronc').fillna('NC')
+liste_noeud_prioritaire=[6872,9754, 5634,5545,4855, 1613]
+
+
+"""####################################################################
+PARTIE COMMUNE 
+###################################################################"""
 
 def noeuds_estimables(df_trafic_pt_comptg):
     """
@@ -27,7 +51,8 @@ def noeuds_estimables(df_trafic_pt_comptg):
     noeud_grp['nb_nan']=noeud_grp.tmjo_2_sens.apply(lambda x : Counter(x))
     noeud_grp['estimable']=noeud_grp.apply(lambda x : True if len(x['tmjo_2_sens'])>2 and x['nb_nan'][-99]<len(x['tmjo_2_sens']) and x['nb_nan'][-99]!=0 else False,axis=1)
     noeud_estimable=noeud_grp.loc[noeud_grp['estimable']].copy()
-    return noeud_estimable,noeud_grp, df_noeuds
+    liste_noeud_estim=liste_noeud_prioritaire+[a for a in noeud_estimable.noeud.tolist() if a not in liste_noeud_prioritaire]
+    return noeud_estimable,noeud_grp, df_noeuds,liste_noeud_estim
 
 def df_noeud_troncon(df_tot, noeud,df_noeud_tot):
     """
@@ -109,11 +134,16 @@ def creer_dico_troncons_noeud(df_troncon_noeud,gdf_rhv_rdpt_simple,gdf_base,lgn_
         df_troncon_noeud : df issue de carac_troncon_noeud()
         gdf_rhv_rdpt_simple : ataframe du filaire de voie avec rond point simplifie et idtroncon
         gdf_base : df du filaire sans modif des ronds points
-        graph_filaire_123_vertex : table des vertex du graph sans modif liées au rond points. cf classe Troncon fonction groupe_noeud_route_2_chaussees()
+        graph_filaire_123_vertex : table des vertex du graph sans modif liées au rond points
         num_noeud : integer : numero du noeud du carrefour
         lgn_rdpt : df des lignes constituant les rd points, cf module Rond Points, du projet otv, dossier Base Bdtopo
     """
     return {a:Troncon(gdf_rhv_rdpt_simple,gdf_base,a,lgn_rdpt,graph_filaire_123_vertex) for a in  df_troncon_noeud.idtronc.tolist()}
+
+
+"""####################################################################
+PARTIE CALCUL 3 VOIES
+###################################################################"""
 
 def type_estim(df_troncon_noeud):
     """
@@ -170,9 +200,7 @@ def maj_trafic_3tronc(df):
                          df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'].tmjo_2_sens.values[0])
                 else : #─ dans ce cas les lignes de trafic existante sont forcementg une arrivee et un depart, sinon celui que l'on cherche ne serait pas double sens
                     if len(df_calcul_trafic_exist)==2 : #cas de voies simple en agglo
-                        trafic=(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'].tmjo_2_sens.values[0]/2+
-                                df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'].tmjo_2_sens.values[0]-
-                                df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'].tmjo_2_sens.values[0]/2)
+                        trafic=trafic=df_calcul_trafic_exist.tmjo_2_sens.sum()
                     elif (len(df_calcul_trafic_exist)%2==0 and #cas des bretelles d'autoroute
                           len(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='a'])%2==0 and 
                           len(df_calcul_trafic_exist.loc[df_calcul_trafic_exist['type_noeud']=='d'])%2==0):
@@ -189,14 +217,79 @@ def maj_trafic_3tronc(df):
         if trafic<50 and trafic !=-999999999 : 
             return -99, "estim_manuelle"
         elif trafic ==-999999999 : 
-            return trafic, "estim_a_travailer"
+            return -99, "estim_a_travailer"
         else : return trafic, "estim_calcul_3_voies"
     
     if df.reset_index().duplicated('index').any() : #inon on peut avoir une errur si le numero d'index est dupliqué
         df=df.reset_index().drop('index',axis=1)
     df.loc[df['tmjo_2_sens']==-99,'type_cpt']=df.loc[df['tmjo_2_sens']==-99].apply(lambda x : calcul_trafic_manquant_3troncons(df)[1], axis=1)
     df.loc[df['tmjo_2_sens']==-99,'tmjo_2_sens']=df.loc[df['tmjo_2_sens']==-99].apply(lambda x : calcul_trafic_manquant_3troncons(df)[0], axis=1)
+
+def maj_traf(df, df_traf):
+    """
+    mettre à jour une df selon le traf d'une autre, en jouant sur les index
+    in : 
+        df : df à mettre à jour, normalement c'est la df issu de l'affectation des pt de comptag ou celle issu de calculer_trafic_3voies
+        df_traf : la df issu des calculs, contenant les attributs 'tmjo_2_sens' et 'type_cpt', avec 'idtronc' en index
+    """
+    df.set_index('idtronc',inplace=True)
+    df.update(df_traf[['tmjo_2_sens','type_cpt']])
+    df.reset_index(inplace=True)
+
+def calculer_trafic_3voies(gdf_base,gdf_rhv_rdpt_simple,lgn_rdpt,graph_filaire_123_vertex):
+    """
+    pour les noeuds qui supportent 3 voies et dont on connait le trafic sur 2, on déduit le trafic sur la 3ème selon les sens de circulation.
+    attention, on modifie sur place le prarametre d'entree gdf_base
+    in :
+       gdf_base : gdf des données avec les trafics issus de ptde comptage (cf module Affectation_pt_comptage
+       gdf_rhv_rdpt_simple : gdf_base avec modif des source et target aux rd pt cf Simplifier_rd_pt.modifier_source_target()
+       graph_filaire_123_vertex : table des vertex du graph sans modif liées au rond points
+       lgn_rdpt : gdf des lignes faisant partie d'un rd pt, cf identifier_ronds_points() 
+    """
+    df_noeuds,liste_noeud_estim=noeuds_estimables(gdf_rhv_rdpt_simple)[2:4]
+    dico_noeud_3_voies, liste_noeud_traite={},[]
+    i=0
+    while liste_noeud_estim : 
+        # pour chaque noeuds : 
+        #calcul des troncons arrivants
+        print(f'debut boucle {datetime.now()}')
+        for j,num_noeud in enumerate(liste_noeud_estim) : 
+            if j%400==0 : print(f'stocker valeur : {num_noeud} iter : {j}')
+            df_troncon_noeud=carac_troncon_noeud(gdf_rhv_rdpt_simple, gdf_base, graph_filaire_123_vertex,num_noeud,df_noeuds,lgn_rdpt)
+            #si tous les trafics du noeud sont déjà renseignés on passe
+            if (df_troncon_noeud.tmjo_2_sens!=-99).all() : 
+                continue
+            #determiner si on est dans le cas d'une voie pouvant etre estimée par calcul (3 troncon dont 1 seul manquant) ou par analogie avec le MMM
+            type_calcul=type_estim(df_troncon_noeud)
+            if type_calcul=='calcul_3_voies' :
+                dico_noeud_3_voies[num_noeud]=df_troncon_noeud
+     
+        print(f'nb noeud 3 voies {len(dico_noeud_3_voies)} ;  {datetime.now()}')
+        if len(dico_noeud_3_voies)==0 : break
         
+        print(f'calcul des  valeur, debut :  {datetime.now()}')
+        for num_noeud, df_troncon_noeud in dico_noeud_3_voies.items() :
+            gdf_rhv_rdpt_simple=verif_index(gdf_rhv_rdpt_simple,'idtronc')#Îsi idtronc est en index on le repasse dans les colonnes
+            if (df_troncon_noeud.tmjo_2_sens!=-99).all() : 
+                continue
+            #calcul trafic
+            maj_trafic_3tronc(df_troncon_noeud)
+            df_update_traf=df_troncon_noeud[['idtronc','tmjo_2_sens','type_cpt']].set_index('idtronc').drop_duplicates()
+            df_update_traf.update(df_corection_calcul_3_voies)
+            #mise à jour du fichier source
+            maj_traf(gdf_rhv_rdpt_simple, df_update_traf)
+            maj_traf(gdf_base, df_update_traf)
+            liste_noeud_traite.append(num_noeud)
+        df_noeuds,liste_noeud_estim=noeuds_estimables(gdf_rhv_rdpt_simple)[2:4]
+        liste_noeud_estim=[n for n in liste_noeud_estim if n not in liste_noeud_traite]
+        dico_noeud_3_voies={}
+        i+=1
+        print(f'fin repetition num : {i}')
+
+"""####################################################################
+PARTIE CALCUL MMM
+###################################################################"""
+
 def matrice_troncon_noeud_rhv(df_troncon_noeud,num_noeud,lgn_rdpt,dico_troncons_noeud) :
     """
     df des lignes arrivant sur un noeud, avec la ligne de départ en face
@@ -210,7 +303,6 @@ def matrice_troncon_noeud_rhv(df_troncon_noeud,num_noeud,lgn_rdpt,dico_troncons_
     #filtrer les lignes des rd pt
     if any([a in lgn_rdpt.id_ign.tolist() for a in df_troncon_noeud.id_ign.tolist()]) : 
         idtronc=df_troncon_noeud.loc[[a in lgn_rdpt.id_ign.tolist() for a in df_troncon_noeud.id_ign.tolist()]].idtronc.to_numpy()[0]
-        
         ident=dico_troncons_noeud[idtronc].lgn_ss_rdpt.loc[(dico_troncons_noeud[idtronc].lgn_ss_rdpt['source']==num_noeud) | 
                                                            (dico_troncons_noeud[idtronc].lgn_ss_rdpt['target']==num_noeud)].ident.to_numpy()[0]
         df_troncon_noeud.loc[df_troncon_noeud['idtronc']==idtronc,'ident']=ident
@@ -220,7 +312,7 @@ def matrice_troncon_noeud_rhv(df_troncon_noeud,num_noeud,lgn_rdpt,dico_troncons_
     cross_join['filtre']=cross_join.apply(lambda x : tuple(sorted((x['ident_x'],x['ident_y']))),axis=1)
     cross_join.drop_duplicates('filtre', inplace=True)
     tab_corresp_rhv=cross_join.loc[cross_join['ident_x']!=cross_join['ident_y']].drop('filtre',axis=1).copy()[['ident_x',
-                'ident_y','idtronc_x','idtronc_y','tmjo_2_sens_x','tmjo_2_sens_y','cat_rhv_x','cat_rhv_y']]
+                'ident_y','idtronc_x','idtronc_y','tmjo_2_sens_x','tmjo_2_sens_y','cat_rhv_x','cat_rhv_y','type_cpt_x','type_cpt_y']]
     return tab_corresp_rhv
 
 def estim_mmm_jointure_voies(matrice_voie_rhv,cle_mmm_rhv):
@@ -317,20 +409,31 @@ def trafic_mmm(gdf_calcul,trafic_inconnus_prior_cat,mmm_simple,cle_mmm_rhv, df_t
         for i,ts in enumerate(df_tronc_suspect.idtronc.tolist()) :
             #le noeud parrallèle
             noeud_par=trouver_noeud_parrallele(dico_troncons_noeud[ts],df_tronc_suspect.iloc[i].noeud,40)
-            if not noeud_par : #peut etre le cas d'une 2*2 terminéee par un rd pt
-                if dico_troncons_noeud[ts].rd_pt_flag : 
+            if not noeud_par : #peut etre le cas d'une 2*2 terminéee par un rd pt, ou d'une simple voie se separanten 2 à la fin
+                if dico_troncons_noeud[ts].rd_pt_flag : #☻cas du rd point
                     df_noeud_par=dico_troncons_noeud[ts].groupe_noeud_route_2_chaussees_rd_pt(40)
-                    lgn_sup=gdf_calcul.loc[((gdf_calcul.source.isin(df_noeud_par.id_left.tolist())) | (gdf_calcul.source.isin(df_noeud_par.id_left.tolist()))) & 
-                                   (~gdf_calcul.ident.isin(df_troncon_noeud.ident.tolist())) & (~gdf_calcul.ident.isin(dico_troncons_noeud[ts].df_lgn_rdpt.ident.tolist()))].ident.to_numpy()[0]
+                    try :
+                        lgn_sup=gdf_calcul.loc[((gdf_calcul.source.isin(df_noeud_par.id_left.tolist())) | (gdf_calcul.source.isin(df_noeud_par.id_left.tolist()))) & 
+                              (~gdf_calcul.ident.isin(df_troncon_noeud.ident.tolist())) & 
+                              (~gdf_calcul.ident.isin(dico_troncons_noeud[ts].df_lgn_rdpt.ident.tolist()))].ident.to_numpy()[0]
+                    except IndexError : continue
+                else : #cas d'un epatte d'oie, pas traité pour le moment
+                    continue
             #lignes rhv qui touchent ce noeud et uqui ont le mm idtrronc
-            else : lgn_sup=gdf_calcul.loc[(gdf_calcul['idtronc']==ts) & ((gdf_calcul['source']==noeud_par) | (gdf_calcul['target']==noeud_par))].ident.to_numpy()[0]
+            else : 
+                lgn_sup=gdf_calcul.loc[(gdf_calcul['idtronc']==ts) & ((gdf_calcul['source']==noeud_par) | (gdf_calcul['target']==noeud_par))].ident.to_numpy()[0]
             #equivalent mmm
-            lgn_sup_mmm=cle_mmm_rhv.loc[cle_mmm_rhv['ident']==lgn_sup].NO.to_numpy()[0]
+            try :
+                lgn_sup_mmm=cle_mmm_rhv.loc[cle_mmm_rhv['ident']==lgn_sup].NO.to_numpy()[0]
+            except IndexError : continue #ça veut dire que 2 lignes RHV sont représentées par 1 seule MMM, dc pas besoin de sommer
             #test si ligne et idtronc deja presents dans traficrens
-            if not any(((traf_mmm['NO_x']==lgn_sup_mmm) & (traf_mmm['idtronc_x']==ts)) | ((traf_mmm['NO_y']==lgn_sup_mmm) & (traf_mmm['idtronc_y']==ts))) :
-                traf_ajout=mmm_simple.loc[mmm_simple['NO']==lgn_sup_mmm].tmja_tv.to_numpy()[0]
-                traf_mmm['tmja_tv_x']=traf_mmm.apply(lambda x : x['tmja_tv_x']+traf_ajout if x['idtronc_x']==ts else x['tmja_tv_x'], axis=1)
-                traf_mmm['tmja_tv_y']=traf_mmm.apply(lambda x : x['tmja_tv_y']+traf_ajout if x['idtronc_y']==ts else x['tmja_tv_y'], axis=1) 
+            if not pd.isnull(lgn_sup_mmm) : #·si lgn_sup_mmm est NaN, ça veut juste dire qu'il n'y a qu'une seule ligne MMM pour 2 lignes RHV donc pas de pb
+                if not any(((traf_mmm['NO_x']==lgn_sup_mmm) & (traf_mmm['idtronc_x']==ts)) | ((traf_mmm['NO_y']==lgn_sup_mmm) & (traf_mmm['idtronc_y']==ts))) :
+                    try : 
+                        traf_ajout=mmm_simple.loc[mmm_simple['NO']==lgn_sup_mmm].tmja_tv.to_numpy()[0]
+                    except IndexError : continue
+                    traf_mmm['tmja_tv_x']=traf_mmm.apply(lambda x : x['tmja_tv_x']+traf_ajout if x['idtronc_x']==ts else x['tmja_tv_x'], axis=1)
+                    traf_mmm['tmja_tv_y']=traf_mmm.apply(lambda x : x['tmja_tv_y']+traf_ajout if x['idtronc_y']==ts else x['tmja_tv_y'], axis=1) 
             
     #ensuite on refait un test dans le cas par exemple des rd pt pour lesquels les voies se séparent à la fin
     traf_mmm2=traf_mmm.copy()
@@ -370,6 +473,67 @@ def calcul_trafic_rhv_depuisMMM(traf_mmm):
     trafc_rens=trafc_rens[['idtronc','tmjo_2_sens_extrapol']].drop_duplicates()
     return trafc_rens
 
+def calculer_trafic_mmm(gdf_calcul, gdf_rhv_rdpt_simple,lgn_rdpt,graph_filaire_123_vertex,mmm_simple,cle_mmm_rhv):
+    """pour les noeuds qui supportent 3 voies et dont on connait le trafic sur 2, on déduit le trafic sur la 3ème selon les sens de circulation.
+    attention, on modifie sur place le prarametre d'entree gdf_base
+    in :
+       gdf_base : gdf des données avec les trafics issus de ptde comptage (cf module Affectation_pt_comptage
+       gdf_rhv_rdpt_simple : gdf_base avec modif des source et target aux rd pt cf Simplifier_rd_pt.modifier_source_target()
+       graph_filaire_123_vertex : table des vertex du graph sans modif liées au rond points
+       lgn_rdpt : gdf des lignes faisant partie d'un rd pt, cf identifier_ronds_points()
+       cle_mmm_rhv : gdf permettant le lien entre les lignes du rhv et les lignes du mmm, de MMM.import_fichiers_mmm
+       mmm_simple : gdf du mmm avec rergouepemnt des attributs de trafic et simpmlification du nb d'attributs, issu de MMM.import_fichiers_mmm
+       
+    """
+    #correction mano des points non présents dans le calcul 3 voies
+    maj_traf(gdf_rhv_rdpt_simple, df_corection_calcul_3_voies.loc[df_corection_calcul_3_voies['tmjo_2_sens']!=-99])
+    maj_traf(gdf_calcul, df_corection_calcul_3_voies.loc[df_corection_calcul_3_voies['tmjo_2_sens']!=-99])
+    
+    df_noeuds,liste_noeud_estim=noeuds_estimables(gdf_rhv_rdpt_simple)[2:4]
+    liste_noeud_traite=[]
+    dico_erreur={}
+    while liste_noeud_estim : 
+        num_noeud=liste_noeud_estim[0]
+        print(num_noeud)
+        liste_noeud_traite.append(num_noeud)
+        df_troncon_noeud=carac_troncon_noeud(gdf_rhv_rdpt_simple, gdf_calcul, graph_filaire_123_vertex,num_noeud,df_noeuds,lgn_rdpt)
+        dico_troncons_noeud=creer_dico_troncons_noeud(df_troncon_noeud,gdf_rhv_rdpt_simple,gdf_calcul,lgn_rdpt,graph_filaire_123_vertex )
+        matrice_rhv=matrice_troncon_noeud_rhv(df_troncon_noeud,num_noeud,lgn_rdpt,dico_troncons_noeud) 
+        try :
+            joint_fv_mmm_e2=estim_mmm_jointure_voies(matrice_rhv,cle_mmm_rhv)
+        except PasCorrespondanceError : 
+            dico_erreur[num_noeud]='PasCorrespondanceError'
+            df_noeuds,liste_noeud_estim=noeuds_estimables(gdf_rhv_rdpt_simple)[2:4]
+            liste_noeud_estim=[n for n in liste_noeud_estim if n not in liste_noeud_traite]
+            continue
+        try :
+            trafic_inconnus_prior_cat=isoler_trafic_inconnu(joint_fv_mmm_e2)
+        except PasDeTraficInconnuError: 
+            dico_erreur[num_noeud]='PasDeTraficInconnuError' 
+            df_noeuds,liste_noeud_estim=noeuds_estimables(gdf_rhv_rdpt_simple)[2:4]
+            liste_noeud_estim=[n for n in liste_noeud_estim if n not in liste_noeud_traite]
+            continue
+        try :
+            trafc_rens=trafic_mmm(gdf_calcul,trafic_inconnus_prior_cat,mmm_simple,cle_mmm_rhv, df_troncon_noeud,dico_troncons_noeud)
+            df_update_traf=calcul_trafic_rhv_depuisMMM(trafc_rens).set_index('idtronc').rename(columns={'tmjo_2_sens_extrapol':'tmjo_2_sens'})
+        except PasDeTraficError as e: 
+            dico_erreur[num_noeud]=e 
+            df_noeuds,liste_noeud_estim=noeuds_estimables(gdf_rhv_rdpt_simple)[2:4]
+            liste_noeud_estim=[n for n in liste_noeud_estim if n not in liste_noeud_traite]
+            continue
+        df_update_traf['type_cpt']='calcul_mmm'
+        #try : 
+        maj_traf(gdf_rhv_rdpt_simple, df_update_traf)
+        maj_traf(gdf_calcul, df_update_traf)
+    
+        liste_noeud_traite.append(num_noeud)
+        df_noeuds,liste_noeud_estim=noeuds_estimables(gdf_rhv_rdpt_simple)[2:4]
+        liste_noeud_estim=[n for n in liste_noeud_estim if n not in liste_noeud_traite]
+
+"""####################################################################
+PARTIE CLASSES
+###################################################################"""
+
 class Troncon(object):
     """
     caractériser un troncon continu.
@@ -399,6 +563,7 @@ class Troncon(object):
         self.id=num_tronc
         self.df_tot=df_tot
         self.graph_tot_vertex=graph_tot_vertex
+        self.rd_pt_flag, self.df_lgn_rdpt, self.nb_lgn_ss_rdpt, self.lgn_ss_rdpt, self.noeud_rd_pt=self.rond_points(lgn_rdpt)
         self.df_lgn=df_rdpt_simple.loc[df_rdpt_simple['idtronc']==num_tronc].copy()
         self.nb_lgn=len(self.df_lgn)
         self.noeuds_uniques_simplifie, self.noeuds_simplifie=nb_noeud_unique_troncon_continu(df_rdpt_simple,num_tronc,'idtronc')
@@ -408,7 +573,7 @@ class Troncon(object):
         self.df_lign_fin_tronc_simplifie=df_rdpt_simple.loc[((df_rdpt_simple['source'].isin(self.noeuds_uniques_simplifie)) | (df_rdpt_simple['target'].isin(self.noeuds_uniques_simplifie))) & 
                        (df_rdpt_simple['idtronc']==num_tronc)]
         self.nb_lgn_tch_noeud_unique_simplifie=len(self.df_lign_fin_tronc_simplifie)
-        self.rd_pt_flag, self.df_lgn_rdpt, self.nb_lgn_ss_rdpt, self.lgn_ss_rdpt=self.rond_points(lgn_rdpt)
+        
         self.double_sens=self.double_sens()
     
     def troncon_touche(self,df_rdpt_simple):
@@ -449,18 +614,21 @@ class Troncon(object):
             df_rdpt : df des lignes constituant le rdpt
             nb_lgn_ss_rdpt : nombre de ligne sans celles qui constituent le rdpoints
         """
-        df_lgn_rdpt=self.df_lgn.loc[self.df_lgn.ident.isin(lgn_rdpt.ident.tolist())]
-        lgn_ss_rdpt=self.df_lgn.loc[~self.df_lgn.ident.isin(lgn_rdpt.ident.tolist())]
+        noeud_rd_pt_tt_ligne=set(lgn_rdpt.source.tolist()+lgn_rdpt.target.tolist())
+        df_lgn_rdpt=self.df_tot.loc[(self.df_tot.ident.isin(lgn_rdpt.ident.tolist())) & (self.df_tot.idtronc==self.id)]
+        lgn_ss_rdpt=self.df_tot.loc[(~self.df_tot.ident.isin(lgn_rdpt.ident.tolist())) & (self.df_tot.idtronc==self.id)]
+        noeud_rd_pt=set(self.df_tot.loc[(self.df_tot.source.isin(noeud_rd_pt_tt_ligne)) & (self.df_tot.idtronc==self.id) ].source.tolist()
+                     +self.df_tot.loc[(self.df_tot.target.isin(noeud_rd_pt_tt_ligne)) & (self.df_tot.idtronc==self.id) ].target.tolist())
         if not df_lgn_rdpt.empty : 
-            return True, df_lgn_rdpt, len(lgn_ss_rdpt), lgn_ss_rdpt
-        else : return False, pd.DataFrame(),self.nb_lgn, self.df_lgn
+            return True, df_lgn_rdpt, len(lgn_ss_rdpt), lgn_ss_rdpt, list(noeud_rd_pt)
+        else : return False, pd.DataFrame(),self.nb_lgn, self.df_lgn, []
     
     def groupe_noeud_route_2_chaussees_rd_pt(self,distance):
         """
         pour une 2*2 voies arriavnt sur un rd pt, si on veut connaitre les noeud de la 2*2 intersectant le rd pt
         """
         noeud_uniq=nb_noeud_unique_troncon_continu(self.df_tot.loc[self.df_tot.ident.isin(self.lgn_ss_rdpt.ident.tolist())], self.id, 'idtronc')[0]
-        print(noeud_uniq)
+        #print(noeud_uniq)
         df_noeud_uniq=self.graph_tot_vertex.loc[(self.graph_tot_vertex['id'].isin(noeud_uniq))]
         corresp_noeud_uniq=plus_proche_voisin(df_noeud_uniq, df_noeud_uniq, distance, 'id', 'id', True)
         df_lgn_rdpt=self.df_tot.loc[self.df_tot.ident.isin(self.df_lgn_rdpt.ident.tolist())]
@@ -471,6 +639,8 @@ class Troncon(object):
         """
         savoir si le troncon est double sens ou non
         """
+        if not self.noeuds_uniques_simplifie : 
+            return False
         if (self.df_lign_fin_tronc_simplifie.rgraph_dbl==0).all() : 
             if all([a in self.groupe_noeud_route_2_chaussees(100).id_left.tolist() for a in self.noeuds_uniques]) and self.nb_lgn>1 and self.nb_noeuds_uniques>2 :
                 return True
