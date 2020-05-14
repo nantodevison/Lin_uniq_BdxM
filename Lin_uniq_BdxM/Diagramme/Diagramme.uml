@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<uml:Model xmi:version="20131001" xmlns:xmi="http://www.omg.org/spec/XMI/20131001" xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore" xmlns:uml="http://www.eclipse.org/uml2/5.0.0/UML" xmi:id="_m17HsIQOEeqoTahVpvUghg" name="Diagramme">
+  <packageImport xmi:type="uml:PackageImport" xmi:id="_nAJasIQOEeqoTahVpvUghg">
+    <importedPackage xmi:type="uml:Model" href="pathmap://UML_LIBRARIES/UMLPrimitiveTypes.library.uml#_0"/>
+  </packageImport>
+  <packagedElement xmi:type="uml:Class" xmi:id="_30Yz8IQOEeqoTahVpvUghg" name="Ensemble_trajet">
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_6ZSZoIQOEeqoTahVpvUghg" name="ligne_depart"/>
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_8PSR8IQOEeqoTahVpvUghg" name="ensemble_lignes"/>
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_-EgHIIQOEeqoTahVpvUghg" name="vertex_connus"/>
+    <ownedAttribute xmi:type="uml:Property" xmi:id="__XtbcIQOEeqoTahVpvUghg" name="vertex_impasse"/>
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_034CEIRnEeqQv_oDM0GEjA" name="liste_trajets_possibles"/>
+    <ownedOperation xmi:type="uml:Operation" xmi:id="_BDPJIIQPEeqoTahVpvUghg" name="initialiser_trajets"/>
+    <ownedOperation xmi:type="uml:Operation" xmi:id="_oYOqgIRnEeqQv_oDM0GEjA" name="creer_nouveau_trajet"/>
+    <ownedOperation xmi:type="uml:Operation" xmi:id="_qCbigIRnEeqQv_oDM0GEjA" name="allonger_trajet"/>
+    <ownedOperation xmi:type="uml:Operation" xmi:id="_swVTMIRnEeqQv_oDM0GEjA" name="verifier_statut_tout_trajet"/>
+    <ownedOperation xmi:type="uml:Operation" xmi:id="_uPTyoIRnEeqQv_oDM0GEjA" name="isoler_trajet_cat3"/>
+  </packagedElement>
+  <packagedElement xmi:type="uml:Class" xmi:id="_Etz9cIQPEeqoTahVpvUghg" name="Trajet">
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_HCMa4IQPEeqoTahVpvUghg" name="points"/>
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_KFudUIQPEeqoTahVpvUghg" name="lignes"/>
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_YvHnoYRnEeqQv_oDM0GEjA" name="ensemble_trajet" type="_30Yz8IQOEeqoTahVpvUghg" aggregation="composite" association="_YvGZgIRnEeqQv_oDM0GEjA">
+      <lowerValue xmi:type="uml:LiteralInteger" xmi:id="_YvHnooRnEeqQv_oDM0GEjA" value="1"/>
+      <upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="_YvIOsIRnEeqQv_oDM0GEjA" value="*"/>
+    </ownedAttribute>
+    <ownedOperation xmi:type="uml:Operation" xmi:id="_LyQ3oIQPEeqoTahVpvUghg" name="calcul_statut"/>
+    <ownedOperation xmi:type="uml:Operation" xmi:id="_wTR1gIRnEeqQv_oDM0GEjA" name="arrive_type"/>
+    <ownedOperation xmi:type="uml:Operation" xmi:id="_xzV6EIRnEeqQv_oDM0GEjA" name="trouver_nouvelles_lignes"/>
+  </packagedElement>
+  <packagedElement xmi:type="uml:Class" xmi:id="_tLc-YIRmEeqQv_oDM0GEjA" name="Batiment">
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_waqsYIRmEeqQv_oDM0GEjA" name="id">
+      <type xmi:type="uml:PrimitiveType" href="pathmap://UML_LIBRARIES/UMLPrimitiveTypes.library.uml#String"/>
+    </ownedAttribute>
+    <ownedAttribute xmi:type="uml:Property" xmi:id="__zf3kIRmEeqQv_oDM0GEjA" name="ident_lgn_proche"/>
+    <ownedAttribute xmi:type="uml:Property" xmi:id="_IInIYIRnEeqQv_oDM0GEjA" name="pt_lgn_proche"/>
+  </packagedElement>
+  <packagedElement xmi:type="uml:Association" xmi:id="_Wj5tQIRnEeqQv_oDM0GEjA" memberEnd="_Wj9XoIRnEeqQv_oDM0GEjA _Wj-lwIRnEeqQv_oDM0GEjA">
+    <eAnnotations xmi:type="ecore:EAnnotation" xmi:id="_Wj8JgIRnEeqQv_oDM0GEjA" source="org.eclipse.papyrus">
+      <details xmi:type="ecore:EStringToStringMapEntry" xmi:id="_Wj8wkIRnEeqQv_oDM0GEjA" key="nature" value="UML_Nature"/>
+    </eAnnotations>
+    <ownedEnd xmi:type="uml:Property" xmi:id="_Wj9XoIRnEeqQv_oDM0GEjA" name="batiment" type="_tLc-YIRmEeqQv_oDM0GEjA" association="_Wj5tQIRnEeqQv_oDM0GEjA"/>
+    <ownedEnd xmi:type="uml:Property" xmi:id="_Wj-lwIRnEeqQv_oDM0GEjA" name="ensemble_trajet" type="_30Yz8IQOEeqoTahVpvUghg" association="_Wj5tQIRnEeqQv_oDM0GEjA"/>
+  </packagedElement>
+  <packagedElement xmi:type="uml:Association" xmi:id="_YvGZgIRnEeqQv_oDM0GEjA" name="regroupe" memberEnd="_YvHnoYRnEeqQv_oDM0GEjA _YvIOsYRnEeqQv_oDM0GEjA">
+    <eAnnotations xmi:type="ecore:EAnnotation" xmi:id="_YvHAkIRnEeqQv_oDM0GEjA" source="org.eclipse.papyrus">
+      <details xmi:type="ecore:EStringToStringMapEntry" xmi:id="_YvHnoIRnEeqQv_oDM0GEjA" key="nature" value="UML_Nature"/>
+    </eAnnotations>
+    <ownedEnd xmi:type="uml:Property" xmi:id="_YvIOsYRnEeqQv_oDM0GEjA" name="trajet" type="_Etz9cIQPEeqoTahVpvUghg" association="_YvGZgIRnEeqQv_oDM0GEjA">
+      <lowerValue xmi:type="uml:LiteralInteger" xmi:id="_gu794IRnEeqQv_oDM0GEjA" value="1"/>
+      <upperValue xmi:type="uml:LiteralUnlimitedNatural" xmi:id="_gvn6YIRnEeqQv_oDM0GEjA" value="*"/>
+    </ownedEnd>
+  </packagedElement>
+</uml:Model>
