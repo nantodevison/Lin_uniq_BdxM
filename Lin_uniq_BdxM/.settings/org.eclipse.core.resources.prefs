@@ -2,4 +2,6 @@ eclipse.preferences.version=1
 encoding//Traitements/Affectation_pt_comptage.py=utf-8
 encoding//Traitements/Comptage.py=utf-8
 encoding//Traitements/Estim_trafic.py=utf-8
+encoding//Traitements/MMM.py=utf-8
 encoding//Traitements/Simplifier_Rdpt.py=utf-8
+encoding//Traitements/Voies_Cat4.py=utf-8
