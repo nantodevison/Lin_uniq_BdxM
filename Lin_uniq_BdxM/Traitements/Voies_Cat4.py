@@ -13,6 +13,103 @@ import geopandas as gp
 import pandas as pd
 import numpy as np
 from copy import copy, deepcopy
+from Outils import gp_changer_nom_geom
+
+"""#############################################################
+PARTIE POINT DE COMPTAGE
+############################################################"""
+
+def isolerDonneesCat4(gdf_rhv_groupe,gdf_rhv_groupe_123, affect_finale,lgn_proche_perm):
+    """
+    a partir des donnes generale et de categorie 4, isoler les donnees cat4
+    in :
+        gdf_rhv_groupe : l'enseble du rhv avec id_troncon
+        gdf_rhv_groupe_123 : dataframe des donnees rhv de cat 1,2,3 traitees en amont cf modules estim_trafic et comptages
+        affect_finale : df de regroupement des points de comptages ponctuels cf modules comptages
+        lgn_proche_perm : dataframe des lignes proches de comptages permanents. cf modules comptages
+    out : 
+        rhv_grp_hors_123 : rhv hors donnees precedemment traitees
+        affect_finale_cat4 : regroupement des compteurs ponctuels sur voies de cateorie 4
+        cpt_perm_cat4 : donnes de compteurs permanents cat4
+    """
+    #voies rhv non comprises dans cat 1,2,3. Il faut une petite astuce car des pb de detremination de stroncons elementaires : 
+    #on cherche les ident des lignes contenu dans les cat1,2,3, on prend les idtronc correspondant, et on cherche celles qui ne sont pas relatives à ces id
+    rhv_grp_hors_123=gdf_rhv_groupe.loc[~gdf_rhv_groupe.idtronc.isin(gdf_rhv_groupe.loc[gdf_rhv_groupe.ident.isin(gdf_rhv_groupe_123.ident.tolist())].idtronc.to_list())]
+    #points de comptages concernes par cat4
+    affect_finale_cat4=affect_finale.loc[affect_finale['idtronc'].isin(rhv_grp_hors_123.idtronc.tolist())]
+    #comptage permannet relatifs aux cat 4 (attention, certains sont a filtrer car trop proche d'une cat 1,2,3 et cat4, dc confusion)
+    cpt_perm_cat4=lgn_proche_perm.loc[(lgn_proche_perm['ident_lgn'].isin(rhv_grp_hors_123.ident.tolist())) &
+                                      (lgn_proche_perm['ident_x']!='Z21DE')][['ident_x', 'idtronc','mjo_val','rgraph_dbl','ident_lgn']].rename(
+        columns={'mjo_val':'tmjo_tv','ident_x':'ident_cpt' })
+    cpt_perm_cat4['type_cpt']='permanent'
+    return rhv_grp_hors_123,affect_finale_cat4,cpt_perm_cat4
+
+def jointureTraficLigne(rhv_grp_hors_123,affect_finale_cat4,cpt_perm_cat4):
+    """
+    a partir des donnees dentree de isolerDonneesCat4, ramener les points vers les lignes
+    in :
+        rhv_grp_hors_123 : rhv hors donnees precedemment traitees
+        affect_finale_cat4 : regroupement des compteurs ponctuels sur voies de cateorie 4
+        cpt_perm_cat4 : donnes de compteurs permanents cat4
+    out : 
+        groupe_ident_cpt : df des points de comptages regroupes par ident de ligne
+        cpt_cat4_uniq_sens_dbl : df des points de groupe_ident_cpt avec un seul point de comptage et double sens
+        cat4_lgn_pb : df des points qui vont poser soucis
+    """
+    #il faut vérifier que pour chaque troncon, les comptages sont bien au nombre de deux, ou concerne une voie unique. pour les autres on multiplie par ddeux la valeur de trafic 
+    #jointure entre les comptage et ligne spour savoir si un comptage isolé a été réalise sur un sens uniq ou juste dans un seul sens pour une voie double sens et fusion avec les permanents
+    joint_ctp_lgn=affect_finale_cat4.merge(rhv_grp_hors_123[['idtronc', 'ident', 'rgraph_dbl']], on='idtronc').rename(columns={'ident_x':'ident_cpt', 'ident_y' : 'ident_lgn'})
+    joint_ctp_lgn['type_cpt']='ponctuel'
+    joint_ctp_lgn_tot=pd.concat([cpt_perm_cat4,joint_ctp_lgn],axis=0, sort=False)
+    #on regroupe par idtronc pour isoler les cas ou 1 seul ident_cpt et rgraph_dbl==1. Ceux la il faudra multiplier les trafic par deux
+    groupe_ident_cpt=joint_ctp_lgn_tot.groupby('idtronc').agg({'tmjo_tv' : lambda x : set(x),'ident_cpt' : lambda x : set(x), 'ident_lgn' : lambda x : set(x),'rgraph_dbl': lambda x : set(x)} )
+    cpt_cat4_uniq_sens_dbl=groupe_ident_cpt.loc[groupe_ident_cpt.apply(lambda x : len(x['ident_cpt'])== 1 and all([a==1 for a in x['rgraph_dbl']]), axis=1)]
+    #il y a aussi le cas pbmatq des lignes à sens uniq avec 2 points de compatge, parfois liés à des erreurs rhv (idtronc 1320, 2920), ou des "2*2" voies
+    cat4_lgn_pb=groupe_ident_cpt.loc[groupe_ident_cpt.apply(lambda x : len(x['ident_cpt'])==2 and all([a==0 for a in x['rgraph_dbl']]), axis=1)]
+    #cat4_lgn_pb_list_idtronc_sens_uniq=[3094, 4687, 8724, 10025]
+    return groupe_ident_cpt,cpt_cat4_uniq_sens_dbl,cat4_lgn_pb
+    
+def calculTraficPointComptage(rhv_grp_hors_123,groupe_ident_cpt,cpt_cat4_uniq_sens_dbl,cat4_lgn_pb,cat4_lgn_pb_list_idtronc_sens_uniq):
+    """
+    pour chaque ligne du rhv concernes calculer le trafic issu des points de comptage
+    in : 
+         rhv_grp_hors_123 : rhv hors donnees precedemment traitees
+        groupe_ident_cpt : df des point de comptage groupes par ident de ligne rhv, cf jointureTraficLigne()
+        cpt_cat4_uniq_sens_dbl : df des points de groupe_ident_cpt avec un seul point de comptage et double sens, cf jointureTraficLigne()
+        cat4_lgn_pb : df des points qui vont poser soucis, cf jointureTraficLigne()
+        cat4_lgn_pb_list_idtronc_sens_uniq list des ident du rhv a sens uniq, cf jointureTraficLigne()
+    out : 
+        rhv_grp_hors_123_traf : df des trafic sur rhv cat 4 
+    """
+    #calcul des tmjo_2_sens
+    def calcul_tmjo_2sens(idtronc, list_1cpt_2sens, df_1ou2sens_2cpt, list_1sens, set_tmjo_tv, set_ident_cpt) : 
+        if idtronc not in list_1cpt_2sens+df_1ou2sens_2cpt.index.tolist() :
+            return sum(set_tmjo_tv) 
+        elif idtronc in list_1cpt_2sens : 
+            return list(set_tmjo_tv)[0]*2
+        elif idtronc in df_1ou2sens_2cpt.index.tolist() : 
+            if idtronc not in list_1sens : 
+                return sum(set_tmjo_tv)
+            else : 
+                return max(set_tmjo_tv)
+        else : return -99   
+        
+    def type_cpt(id_cpt_exp) : 
+        if pd.isnull(id_cpt_exp) : return np.NaN
+        elif id_cpt_exp[0]=='Z' : return 'permanent'
+        else  : return 'ponctuel'
+
+    groupe_ident_cpt.reset_index(inplace=True)
+    groupe_ident_cpt['tmjo_2_sens']=groupe_ident_cpt.reset_index().apply(lambda x : calcul_tmjo_2sens(x['idtronc'],
+                                                                                                      cpt_cat4_uniq_sens_dbl.index.tolist(),
+                                                                                                      cat4_lgn_pb,cat4_lgn_pb_list_idtronc_sens_uniq,
+                                                                                                      x['tmjo_tv'], x['ident_cpt']), axis=1)
+    groupe_ident_cpt['id_cpt_exp']=groupe_ident_cpt.apply(lambda x : ', '.join([str(a) for a in x['ident_cpt']]), axis=1)
+    #jointure avec les donnees hors cat1,2,3
+    rhv_grp_hors_123_traf=rhv_grp_hors_123.merge(groupe_ident_cpt[['idtronc','tmjo_2_sens','id_cpt_exp']],on='idtronc', how='left').drop('id_y', axis=1).rename(columns={'id_x':'id'})
+    rhv_grp_hors_123_traf=gp_changer_nom_geom(rhv_grp_hors_123_traf, 'geom')
+    rhv_grp_hors_123_traf['type_cpt']=rhv_grp_hors_123_traf.id_cpt_exp.apply(lambda x : type_cpt(x) )
+    return  rhv_grp_hors_123_traf
 
 """#############################################################
 PARTIE ESTIMATION POP ET EMPLOI
@@ -37,7 +134,7 @@ class ensemble_trajet :
             
     def initialiser_trajets(self, debug=False):
         """
-        initialiser le(s) premier(s) trajet(s) possible selon la ligne de d�part 
+        initialiser le(s) premier(s) trajet(s) possible selon la ligne de depart
         """
         lgn_depart=self.ensemble_lignes.loc[self.ensemble_lignes['ident']==self.ligne_depart]
         if lgn_depart.rgraph_dbl.all()==1 or debug : 
@@ -51,7 +148,7 @@ class ensemble_trajet :
     
     def creer_nouveau_trajet(self,t,ident_possibles, vertex_possibles):
         """
-        Si une ligne se s�pare en plusieurs, il faut allonger le trajet existant et en cree un ou des nouveaux avec les diff�rentes possibilit�s
+        Si une ligne se  separe  en plusieurs, il faut allonger le trajet existant et en cree un ou des nouveaux avec les differentes possibilites
         """
         new_t=deepcopy(t)#pour ne pas impacter les donnees de base
         for e,(i, v) in enumerate(zip(ident_possibles, vertex_possibles)) : 
@@ -123,7 +220,7 @@ class ensemble_trajet :
     
     def isoler_trajet_cat3(self):
         """
-        limiter les trajets � ceux qui touchent une ligne de catg�orie 1,2,3 
+        limiter les trajets  a  ceux qui touchent une ligne de catg�orie 1,2,3 
         """
         return self.df_tt_trajet.loc[self.df_tt_trajet['type_arrivee']=='cat3'].copy()
     
@@ -151,7 +248,7 @@ class ensemble_trajet :
         
     def calculs_trajets(self):
         """
-        fonction globale de r�cup�ration de lal iste des idents composants le trajet le plus court, pour un b�timent
+        fonction globale de recuperation  de lal iste des idents composants le trajet le plus court, pour un batiment
         """
         self.initialiser_trajets()
         self.allonger_trajet()
@@ -189,7 +286,7 @@ class ensemble_trajet :
 class trajet(ensemble_trajet) : 
     def __init__(self, ligne_depart,point_depart, ensemble_lignes, vertex_connus, vertex_impasse,ensemble_vertex, point, lignes):
         """
-        points : liste de points ordonn�s
+        points : liste de points ordonnes
         lignes : list d'identifiant de lignes
         """
         self.points, self.lignes=point, lignes
@@ -204,7 +301,7 @@ class trajet(ensemble_trajet) :
         
     def arrive_type(self):
         """
-        savoir si l'arrive est liee � une voie de cat 1,2,3 ou impasse
+        savoir si l'arrive est liee a une voie de cat 1,2,3 ou impasse
         """
         if not self.type_arrivee or self.type_arrivee=='None':
             self.type_arrivee='impasse' if self.points[-1] in self.vertex_impasse else 'cat3'
