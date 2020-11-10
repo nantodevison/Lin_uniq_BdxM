@@ -23,9 +23,9 @@ def import_bdxm_pct(chemin):
     """
     cpt_pct=pd.read_excel(chemin)
     cpt_pct.columns=[a.lower() for a in cpt_pct.columns]
-    cpt_pct = gp.GeoDataFrame(cpt_pct, geometry=gp.points_from_xy(cpt_pct.longitude, cpt_pct.latitude))
-    cpt_pct.crs = {'init' :'epsg:4326'}
-    cpt_pct_l93=cpt_pct.to_crs({'init': 'epsg:2154'})
+    cpt_pct = gp.GeoDataFrame(cpt_pct, geometry=gp.points_from_xy(cpt_pct.longitude, cpt_pct.latitude), crs='EPSG:4326')
+    #cpt_pct.crs = {'init' :'epsg:4326'}
+    cpt_pct_l93=cpt_pct.to_crs('epsg:2154')
     cpt_pct_l93['x_l93']=cpt_pct_l93.geometry.apply(lambda x : x.x)
     cpt_pct_l93['y_l93']=cpt_pct_l93.geometry.apply(lambda x : x.y)
     return cpt_pct_l93

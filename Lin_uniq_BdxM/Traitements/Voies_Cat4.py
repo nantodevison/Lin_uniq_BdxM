@@ -211,7 +211,7 @@ class trajet(ensemble_trajet) :
         
     def trouver_nouvelles_lignes(self, debug=False):
         """
-        trouver les lignes possibles � parcourir, et es vertex associ�s, trier dans le mm ordre
+        trouver les lignes possibles a parcourir, et les vertex associes, trier dans le mm ordre
         in : 
             debug : si le calcul des tronçons nedonne aucun type 'cat3', on refait tourner cette fonction avec param debug pour obtenir une liste des idents possibles différentes.
                 devrait pouvoir etre rempacée par un décorateur
