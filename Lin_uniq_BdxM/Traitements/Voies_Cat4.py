@@ -14,6 +14,8 @@ import pandas as pd
 import numpy as np
 from copy import copy, deepcopy
 from Outils import gp_changer_nom_geom
+from shapely.ops import nearest_points
+from collections import Counter
 
 """#############################################################
 PARTIE POINT DE COMPTAGE
@@ -114,6 +116,70 @@ def calculTraficPointComptage(rhv_grp_hors_123,groupe_ident_cpt,cpt_cat4_uniq_se
 """#############################################################
 PARTIE ESTIMATION POP ET EMPLOI
 ############################################################"""
+
+def importDonneesBase(fichierTraf1234,fichierVoiesNonRenseignees,fichierBati,fichierCorrespondanceBati):
+    """
+    importer les donnes de trafic et de bati necessaires aux traitements : 
+    in : 
+        fichierTraf1234 : fichier shape comprenant les trafic sur le rhv pour les voies de toutes categories,
+        fichierVoiesNonRenseignees : chemin ver le fichier shape comrenant tout les lgnes du rhv non renseignees,
+        fichierBati : fichier shape du bati, issu du LCSQA,
+        fichierCorrespondanceBati : fichier de correspondance entre un id batiment les ident lignes du rhv, obtenu par coreesp_bati=plus_proche_voisin(bati,graph_filaire,200,'ID','ident') (attention c long)
+    out : 
+        gdf_traf_1234 : df du fichier entre, 
+        voies_nc : df des voies a renseigner , 
+        bati  df du fichier entre: ,
+        coreesp_bati2 : df de correspondancenettoyee
+    """
+    gdf_traf_1234=gp.read_file(fichierTraf1234)
+    #importdes voies non connues
+    voies_nc=gp.read_file(fichierVoiesNonRenseignees)
+    voies_nc=pd.concat([voies_nc,gdf_traf_1234.loc[gdf_traf_1234.cat_rhv.isin(['4','64'])].rename(columns={'id':'id_x'})[voies_nc.columns[:-1]]],axis=0, sort=False)
+    voies_nc['longueur']=voies_nc.geometry.length
+    bati=gp.read_file(fichierBati)
+    #plus proche voisin sur la base de tout le rhv route
+    ident_connus=gdf_traf_1234.ident.to_numpy()
+    #coreesp_bati=plus_proche_voisin(bati,graph_filaire,200,'ID','ident')
+    coreesp_bati2=pd.read_csv(fichierCorrespondanceBati)
+    #la corresppondance peut renvoyer plusieurs valeurs si un vertex commun a plusieurs lignes est le point le plus proche. Dans ce cas on conserve l'ident d'une voies de cat1,2,3 si il y en a une, sionon n'importe lequel
+    for i in coreesp_bati2.loc[coreesp_bati2.duplicated('ID')].ID.unique() :
+        idents_dbl=coreesp_bati2.loc[coreesp_bati2['ID']==i].ident.tolist()
+        mask=[str(i) in ident_connus for i in idents_dbl]
+        if any(mask) : 
+            ident_final=str(np.array(idents_dbl)[mask][0])
+        else : 
+            ident_final=str(idents_dbl[0])
+        coreesp_bati2.loc[coreesp_bati2['ID']==i,'ident']=ident_final
+    coreesp_bati2.drop_duplicates(['ID','ident'], inplace=True)
+    coreesp_bati2['ident']=coreesp_bati2.ident.apply(lambda x : str(x))
+    return gdf_traf_1234, voies_nc, bati,coreesp_bati2
+
+def definitionVariables(graph_filaire,gdf_rhv_groupe,gdf_traf_1234, voies_nc, bati,coreesp_bati2):
+    """
+    perparer les donnees necessaires a la recherche de trajets par batiment
+    in  : 
+        graph_filaire : df du graph du filiare de voie : ca peut etre ameliorer : je me suis pris les pieds dans le tapis avec les sources et target des differents fcihiers
+        gdf_rhv_groupe : df du rhv avec l'id troncon
+        gdf_traf_1234, voies_nc, bati,coreesp_bati2 : donnes dentree, cf importDonneesBase()
+    out : 
+        bati_ligne_proche : df d'association du bati et des idents
+    """
+    #ensuite, on va limiter les donées aux batiments relatifs aux voies non affectées
+    list_bati_rhv_cat4=coreesp_bati2.loc[coreesp_bati2.ident.isin(gdf_traf_1234.loc[gdf_traf_1234.cat_rhv.isin(['4','64'])].ident.tolist())].ID.tolist()
+    bati_voie_inconnue=bati.loc[bati.ID.isin(coreesp_bati2.loc[~coreesp_bati2.ident.isin(gdf_traf_1234.ident)].ID.tolist()+list_bati_rhv_cat4)].copy() # ça c'est pour avoir aussi le bati relatifs aux comptage voies cat 4 pour pouvoir comparer
+    #definition des variables neecessaires
+    #ramener la geometrie de la ligne la plus proche sur le bati inconnu
+    bati_ligne_proche=bati_voie_inconnue.loc[(bati_voie_inconnue['PopT2016']>=1) & (bati_voie_inconnue['ID']!='BatiFictif')].merge(coreesp_bati2[['ID','ident']], on='ID')
+    bati_ligne_proche['ident']=bati_ligne_proche.ident.apply(lambda x : str(x))
+    bati_ligne_proche=bati_ligne_proche.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
+    #calculer le point le plus proche situé sur la ligne
+    bati_ligne_proche['point_proche']=bati_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
+    ensemble_lignes=voies_nc.reset_index(drop=True)
+    #j'ai besoin de cette ligne car les source_target de gdf_traf_1234 sont différents de ceux de ensemble_lignes
+    gdf_tot_eq_1234=graph_filaire.loc[graph_filaire.ident.isin(gdf_traf_1234.loc[(~gdf_traf_1234.cat_rhv.isin(('4','64'))) & (~gdf_traf_1234.cat_rhv.isna())].ident.tolist())] #trouver tt les lignes qui ne sont pas cat4 ou sans valeur
+    vertex_connus=list(set(gdf_tot_eq_1234.source.tolist()+gdf_tot_eq_1234.target.tolist()))
+    vertex_impasse=[k for k, v in Counter(graph_filaire.source.tolist()+graph_filaire.target.tolist()).items() if v==1]
+    return bati_ligne_proche,ensemble_lignes,vertex_connus, vertex_impasse
 
 class ensemble_trajet : 
     def __init__(self,ligne_depart,point_depart, ensemble_lignes, vertex_connus, vertex_impasse, ensemble_vertex):
