@@ -154,15 +154,19 @@ def importDonneesBase(fichierTraf1234,fichierVoiesNonRenseignees,fichierBati,fic
     coreesp_bati2['ident']=coreesp_bati2.ident.apply(lambda x : str(x))
     return gdf_traf_1234, voies_nc, bati,coreesp_bati2
 
-def definitionVariables(graph_filaire,gdf_rhv_groupe,gdf_traf_1234, voies_nc, bati,coreesp_bati2):
+def definitionVariablesBati(gdf_rhv_groupe,gdf_traf_1234, bati,coreesp_bati2):
     """
-    perparer les donnees necessaires a la recherche de trajets par batiment
+    perparer les donnees liées au batiment necessaires a la recherche de trajets
     in  : 
         graph_filaire : df du graph du filiare de voie : ca peut etre ameliorer : je me suis pris les pieds dans le tapis avec les sources et target des differents fcihiers
         gdf_rhv_groupe : df du rhv avec l'id troncon
-        gdf_traf_1234, voies_nc, bati,coreesp_bati2 : donnes dentree, cf importDonneesBase()
+        gdf_traf_123 cf importDonneesBase()
+        bati : issu de importDonneesBase()
+        voies_nc : issu de importDonneesBase()
+        coreesp_bati2 :issu de importDonneesBase()
     out : 
         bati_ligne_proche : df d'association du bati et des idents
+        
     """
     #ensuite, on va limiter les donées aux batiments relatifs aux voies non affectées
     list_bati_rhv_cat4=coreesp_bati2.loc[coreesp_bati2.ident.isin(gdf_traf_1234.loc[gdf_traf_1234.cat_rhv.isin(['4','64'])].ident.tolist())].ID.tolist()
@@ -174,12 +178,62 @@ def definitionVariables(graph_filaire,gdf_rhv_groupe,gdf_traf_1234, voies_nc, ba
     bati_ligne_proche=bati_ligne_proche.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
     #calculer le point le plus proche situé sur la ligne
     bati_ligne_proche['point_proche']=bati_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
+    return bati_ligne_proche
+
+def definitionVariablesActivite(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichierEtablissementBdxMet, fichierUnitesLegalesBdxMet,fichierTrancheEffectif):
+    """
+    Preparer les variables d'activites allant serviur au calcul des trajets
+    in : 
+        fichierEtablissementBdxMet : fichier des etablissement sur la zone de Bdx Met
+        fichierUnitesLegalesBdxMet : fichier des unites legales sur la zone de BdxMet
+        ppvActiviteRhv : ident de la ligne rhv plus proche voisin de l'activite
+        nafListen5 : df des codes naf avec ajout d'une colonne perso sur les codes a exclure
+        fichierTrancheEffectif : fichier perso d'association d'uen nombre arbitraire a une tranche d'effecteif
+    out : 
+        etablissementEnrichi : integralite des etablissement avec donnees sirene en plus
+        effectifEtablissement : df avec geometrie d'etablissement et donnees d'effectif moyen, uniquement si il existe des effectif et que l'etablissement n'est pas fereme
+        activ_ligne_proche : associations du point le plus proche de la voie sur l'ident la plus proche (preparatoire au calcul de trajet)
+    """
+    #isoler les activites le long des voies de categorie 4
+    activiteRhvCat4=ppvActiviteRhv.loc[ppvActiviteRhv.ident_rhv.isin(gdf_rhv_groupe.loc[gdf_rhv_groupe.cat_rhv.isin(('4','64'))].ident.tolist())].copy()
+    #donnees d'effectifs
+    etablissements=pd.read_csv(fichierEtablissementBdxMet)[['siren','nic','siret','etatAdministratifEtablissement','trancheEffectifsEtablissement','anneeEffectifsEtablissement','etablissementSiege','activitePrincipaleEtablissement','caractereEmployeurEtablissement']]
+    UniteLegale=pd.read_csv(fichierUnitesLegalesBdxMet)[['siren','trancheEffectifsUniteLegale','anneeEffectifsUniteLegale','categorieEntreprise','etatAdministratifUniteLegale','activitePrincipaleUniteLegale','caractereEmployeurUniteLegale']]
+    etablissementEnrichi=activiteRhvCat4.assign(ident=activiteRhvCat4.ident.astype('float')).merge(etablissements, left_on='ident', right_on='siret', how='left').merge(UniteLegale, on='siren', how='left')
+    #filtre sur les effectifs inconnus ou à 0
+    etablissementEffectifPositif=etablissementEnrichi.loc[((etablissementEnrichi.trancheEffectifsEtablissement.isna()) & (~etablissementEnrichi.trancheEffectifsUniteLegale.isna()) & (etablissementEnrichi.etablissementSiege) & ((~etablissementEnrichi['trancheEffectifsUniteLegale'].isin(['NN','00','0.0'])))) | 
+                            ((~etablissementEnrichi['trancheEffectifsEtablissement'].isin(['NN','00','0.0'])) & (~etablissementEnrichi['trancheEffectifsEtablissement'].isna()) )].copy()
+    #filtre sur les activités de constrcution et de transport
+    etablissementEffectifPositif=etablissementEffectifPositif.loc[~etablissementEffectifPositif.activitePrincipaleEtablissement.isin(nafListen5.loc[nafListen5.ModifEffectif=='N'].Code.tolist())]
+    etablissementEffectifPositifOuvert=etablissementEffectifPositif.loc[(etablissementEffectifPositif.etatAdministratifEtablissement!='F')].copy()
+    #pour les établissement avec effectif : prendre la valeur d'éffectif de l'établissement, sinon celle de l'unité légale
+    etablissementEffectifPositifOuvert['effecFinal']=etablissementEffectifPositifOuvert.apply(lambda x : x['trancheEffectifsUniteLegale'] if pd.isnull(x['trancheEffectifsEtablissement']) else x['trancheEffectifsEtablissement'], axis=1 )
+    #ensuite on recupere l'affectation à un effectif moyen et on joint le tout
+    descriptionEffectif=pd.read_csv(fichierTrancheEffectif)
+    effectifEtablissement=etablissementEffectifPositifOuvert.merge(descriptionEffectif, left_on='effecFinal', right_on='codeEffectif',how='left')
+    activ_ligne_proche=effectifEtablissement.rename(columns={'id':'ID','ident':'siren','ident_rhv':'ident'})
+    activ_ligne_proche=activ_ligne_proche.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
+    activ_ligne_proche['point_proche']=activ_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
+    return etablissementEnrichi,effectifEtablissement,activ_ligne_proche
+
+def definitionVariablesVoies(graph_filaire,gdf_traf_1234, voies_nc ):
+    """
+    preparer les données liées au voies pour la recherche de trajet
+    in  : 
+        graph_filaire : df du graph du filiare de voie : ca peut etre ameliorer : je me suis pris les pieds dans le tapis avec les sources et target des differents fcihiers
+        gdf_traf_1234 : : donnes dentree, cf importDonneesBase() 
+        voies_nc : donnes dentree, cf importDonneesBase()
+    out : 
+        ensemble_lignes : df des voies non connues avec reset de l'index
+        vertex_connus : vertex des voies qui ne sont pas de cat 4 ou 64 et dont le cat_rhv est connu
+        vertex_impasse : vertex des voies en impasses
+    """
     ensemble_lignes=voies_nc.reset_index(drop=True)
     #j'ai besoin de cette ligne car les source_target de gdf_traf_1234 sont différents de ceux de ensemble_lignes
     gdf_tot_eq_1234=graph_filaire.loc[graph_filaire.ident.isin(gdf_traf_1234.loc[(~gdf_traf_1234.cat_rhv.isin(('4','64'))) & (~gdf_traf_1234.cat_rhv.isna())].ident.tolist())] #trouver tt les lignes qui ne sont pas cat4 ou sans valeur
     vertex_connus=list(set(gdf_tot_eq_1234.source.tolist()+gdf_tot_eq_1234.target.tolist()))
     vertex_impasse=[k for k, v in Counter(graph_filaire.source.tolist()+graph_filaire.target.tolist()).items() if v==1]
-    return bati_ligne_proche,ensemble_lignes,vertex_connus, vertex_impasse
+    return ensemble_lignes,vertex_connus, vertex_impasse
 
 class ensemble_trajet : 
     def __init__(self,ligne_depart,point_depart, ensemble_lignes, vertex_connus, vertex_impasse, ensemble_vertex):
