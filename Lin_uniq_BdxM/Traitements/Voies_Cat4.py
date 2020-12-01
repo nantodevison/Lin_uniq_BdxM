@@ -180,26 +180,26 @@ def definitionVariablesBati(gdf_rhv_groupe,gdf_traf_1234, bati,coreesp_bati2):
     bati_ligne_proche['point_proche']=bati_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
     return bati_ligne_proche
 
-def definitionVariablesActivite(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichierEtablissementBdxMet, fichierUnitesLegalesBdxMet,fichierTrancheEffectif):
+def etablissementsBdxMet(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichierEtablissement, fichierUnitesLegales,fichierTrancheEffectif):
     """
-    Preparer les variables d'activites allant serviur au calcul des trajets
+    Preparer les donnees d'etablissement issue de bordeaux metropole
     in : 
-        fichierEtablissementBdxMet : fichier des etablissement sur la zone de Bdx Met
-        fichierUnitesLegalesBdxMet : fichier des unites legales sur la zone de BdxMet
+        fichierEtablissement : fichier des etablissement sur la gironde
+        fichierUnitesLegales : fichier des unites legales sur la gironde
         ppvActiviteRhv : ident de la ligne rhv plus proche voisin de l'activite
         nafListen5 : df des codes naf avec ajout d'une colonne perso sur les codes a exclure
         fichierTrancheEffectif : fichier perso d'association d'uen nombre arbitraire a une tranche d'effecteif
     out : 
         etablissementEnrichi : integralite des etablissement avec donnees sirene en plus
-        effectifEtablissement : df avec geometrie d'etablissement et donnees d'effectif moyen, uniquement si il existe des effectif et que l'etablissement n'est pas fereme
+        etablissementEffectifPositifOuvert : df avec geometrie d'etablissement, uniquement si il existe des effectif et que l'etablissement n'est pas fereme
         activ_ligne_proche : associations du point le plus proche de la voie sur l'ident la plus proche (preparatoire au calcul de trajet)
     """
     #isoler les activites le long des voies de categorie 4
     activiteRhvCat4=ppvActiviteRhv.loc[ppvActiviteRhv.ident_rhv.isin(gdf_rhv_groupe.loc[gdf_rhv_groupe.cat_rhv.isin(('4','64'))].ident.tolist())].copy()
     #donnees d'effectifs
-    etablissements=pd.read_csv(fichierEtablissementBdxMet)[['siren','nic','siret','etatAdministratifEtablissement','trancheEffectifsEtablissement','anneeEffectifsEtablissement','etablissementSiege','activitePrincipaleEtablissement','caractereEmployeurEtablissement']]
-    UniteLegale=pd.read_csv(fichierUnitesLegalesBdxMet)[['siren','trancheEffectifsUniteLegale','anneeEffectifsUniteLegale','categorieEntreprise','etatAdministratifUniteLegale','activitePrincipaleUniteLegale','caractereEmployeurUniteLegale']]
-    etablissementEnrichi=activiteRhvCat4.assign(ident=activiteRhvCat4.ident.astype('float')).merge(etablissements, left_on='ident', right_on='siret', how='left').merge(UniteLegale, on='siren', how='left')
+    etablissements=pd.read_csv(fichierEtablissement,dtype={'siren':str,'nic':str,'siret':str})[['siren','nic','siret','etatAdministratifEtablissement','trancheEffectifsEtablissement','anneeEffectifsEtablissement','etablissementSiege','activitePrincipaleEtablissement','caractereEmployeurEtablissement']]
+    UniteLegale=pd.read_csv(fichierUnitesLegales,dtype={'siren':str})[['siren','trancheEffectifsUniteLegale','anneeEffectifsUniteLegale','categorieEntreprise','etatAdministratifUniteLegale','activitePrincipaleUniteLegale','caractereEmployeurUniteLegale']]
+    etablissementEnrichi=activiteRhvCat4.assign(ident=activiteRhvCat4.ident.astype('str')).merge(etablissements, left_on='ident', right_on='siret', how='left').merge(UniteLegale, on='siren', how='left')
     #filtre sur les effectifs inconnus ou à 0
     etablissementEffectifPositif=etablissementEnrichi.loc[((etablissementEnrichi.trancheEffectifsEtablissement.isna()) & (~etablissementEnrichi.trancheEffectifsUniteLegale.isna()) & (etablissementEnrichi.etablissementSiege) & ((~etablissementEnrichi['trancheEffectifsUniteLegale'].isin(['NN','00','0.0'])))) | 
                             ((~etablissementEnrichi['trancheEffectifsEtablissement'].isin(['NN','00','0.0'])) & (~etablissementEnrichi['trancheEffectifsEtablissement'].isna()) )].copy()
@@ -208,13 +208,39 @@ def definitionVariablesActivite(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichie
     etablissementEffectifPositifOuvert=etablissementEffectifPositif.loc[(etablissementEffectifPositif.etatAdministratifEtablissement!='F')].copy()
     #pour les établissement avec effectif : prendre la valeur d'éffectif de l'établissement, sinon celle de l'unité légale
     etablissementEffectifPositifOuvert['effecFinal']=etablissementEffectifPositifOuvert.apply(lambda x : x['trancheEffectifsUniteLegale'] if pd.isnull(x['trancheEffectifsEtablissement']) else x['trancheEffectifsEtablissement'], axis=1 )
+    activ_ligne_proche=etablissementEffectifPositifOuvert.rename(columns={'id':'ID','ident':'siren','ident_rhv':'ident'})
+    activ_ligne_proche=activ_ligne_proche.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
+    activ_ligne_proche['point_proche']=activ_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
+    return etablissementEnrichi,etablissementEffectifPositifOuvert,activ_ligne_proche
+
+def fichierSireneFiness(fichierEtablissement,fichierPpvFinessRhvCat4,etablissementEffectifPositifOuvert,UniteLegale33):
+    """
+    ajouter les infos du fichier Sirene aux données Finess
+    in :
+        fichierPpvFinessRhvCat4 : chemin vers les données de finess issu de data.gouv, limitéd selon le plus proche voisin de categorie 4 du rhv
+        fichierEtablissement : chemin vers le fichier des etablissement issu de data.gouv, filtre sur la gironde
+        etablissementEffectifPositifOuvert : issu de definitionVariablesActivite()
+        UniteLegale33 : fichier des unites legales sur la gironde
+    """
+    finess=gp.read_file(fichierPpvFinessRhvCat4)
+    finess=finess.loc[~finess.siret.isna()].copy()
+    finess['siret']=finess.siret.apply(lambda x : str(int(x)))
+    UniteLegale33=pd.read_csv(UniteLegale33,dtype={'siren':str})[['siren','trancheEffectifsUniteLegale','anneeEffectifsUniteLegale','categorieEntreprise','etatAdministratifUniteLegale','activitePrincipaleUniteLegale','caractereEmployeurUniteLegale']]
+    etab=pd.read_csv(fichierEtablissement,dtype={'siren':str,'nic':str,'siret':str})[['siren','nic','siret','etatAdministratifEtablissement','trancheEffectifsEtablissement','anneeEffectifsEtablissement','etablissementSiege','activitePrincipaleEtablissement','caractereEmployeurEtablissement']]
+    etab_finess=etab.loc[etab.siret.isin(finess.siret.tolist())].copy()
+    finessSirene=finess[['nofinesset','siret','geometry', 'ident', 'cat_rhv']].rename(columns={'nofinesset':'id'}).merge(etab_finess, on ='siret').merge(
+        UniteLegale33,on='siren',how='left')
+    finessSirene=finessSirene.loc[(~finessSirene.siret.isin(etablissementEffectifPositifOuvert.siret.tolist())) & ((finessSirene.trancheEffectifsEtablissement.isna()) & (~finessSirene.trancheEffectifsUniteLegale.isna()) & (finessSirene.etablissementSiege) & ((~finessSirene['trancheEffectifsUniteLegale'].isin(['NN','00','0.0'])))) | 
+                            ((~finessSirene['trancheEffectifsEtablissement'].isin(['NN','00','0.0'])) & (~finessSirene['trancheEffectifsEtablissement'].isna()) )].copy()
+    return finessSirene
+
+def effectifMoyen(etablissementEffectifPositifOuvert,fichierTrancheEffectif):
+    """
+    pour l'ensemble des activites avec effectif issus de sirene, calculé l'effectif moyen
+    """
     #ensuite on recupere l'affectation à un effectif moyen et on joint le tout
     descriptionEffectif=pd.read_csv(fichierTrancheEffectif)
     effectifEtablissement=etablissementEffectifPositifOuvert.merge(descriptionEffectif, left_on='effecFinal', right_on='codeEffectif',how='left')
-    activ_ligne_proche=effectifEtablissement.rename(columns={'id':'ID','ident':'siren','ident_rhv':'ident'})
-    activ_ligne_proche=activ_ligne_proche.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
-    activ_ligne_proche['point_proche']=activ_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
-    return etablissementEnrichi,effectifEtablissement,activ_ligne_proche
 
 def definitionVariablesVoies(graph_filaire,gdf_traf_1234, voies_nc ):
     """
