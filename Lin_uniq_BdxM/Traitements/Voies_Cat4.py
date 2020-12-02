@@ -16,6 +16,8 @@ from copy import copy, deepcopy
 from Outils import gp_changer_nom_geom
 from shapely.ops import nearest_points
 from collections import Counter
+from difflib import SequenceMatcher
+from unidecode import unidecode
 
 """#############################################################
 PARTIE POINT DE COMPTAGE
@@ -180,7 +182,7 @@ def definitionVariablesBati(gdf_rhv_groupe,gdf_traf_1234, bati,coreesp_bati2):
     bati_ligne_proche['point_proche']=bati_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
     return bati_ligne_proche
 
-def etablissementsBdxMet(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichierEtablissement, fichierUnitesLegales,fichierTrancheEffectif):
+def etablissementsBdxMet(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichierEtablissement, fichierUnitesLegales):
     """
     Preparer les donnees d'etablissement issue de bordeaux metropole
     in : 
@@ -206,12 +208,8 @@ def etablissementsBdxMet(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichierEtabli
     #filtre sur les activités de constrcution et de transport
     etablissementEffectifPositif=etablissementEffectifPositif.loc[~etablissementEffectifPositif.activitePrincipaleEtablissement.isin(nafListen5.loc[nafListen5.ModifEffectif=='N'].Code.tolist())]
     etablissementEffectifPositifOuvert=etablissementEffectifPositif.loc[(etablissementEffectifPositif.etatAdministratifEtablissement!='F')].copy()
-    #pour les établissement avec effectif : prendre la valeur d'éffectif de l'établissement, sinon celle de l'unité légale
-    etablissementEffectifPositifOuvert['effecFinal']=etablissementEffectifPositifOuvert.apply(lambda x : x['trancheEffectifsUniteLegale'] if pd.isnull(x['trancheEffectifsEtablissement']) else x['trancheEffectifsEtablissement'], axis=1 )
-    activ_ligne_proche=etablissementEffectifPositifOuvert.rename(columns={'id':'ID','ident':'siren','ident_rhv':'ident'})
-    activ_ligne_proche=activ_ligne_proche.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
-    activ_ligne_proche['point_proche']=activ_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
-    return etablissementEnrichi,etablissementEffectifPositifOuvert,activ_ligne_proche
+    
+    return etablissementEnrichi,etablissementEffectifPositifOuvert
 
 def fichierSireneFiness(fichierEtablissement,fichierPpvFinessRhvCat4,etablissementEffectifPositifOuvert,UniteLegale33):
     """
@@ -219,7 +217,7 @@ def fichierSireneFiness(fichierEtablissement,fichierPpvFinessRhvCat4,etablisseme
     in :
         fichierPpvFinessRhvCat4 : chemin vers les données de finess issu de data.gouv, limitéd selon le plus proche voisin de categorie 4 du rhv
         fichierEtablissement : chemin vers le fichier des etablissement issu de data.gouv, filtre sur la gironde
-        etablissementEffectifPositifOuvert : issu de definitionVariablesActivite()
+        etablissementEffectifPositifOuvert : issu de etablissementsBdxMet()
         UniteLegale33 : fichier des unites legales sur la gironde
     """
     finess=gp.read_file(fichierPpvFinessRhvCat4)
@@ -234,13 +232,110 @@ def fichierSireneFiness(fichierEtablissement,fichierPpvFinessRhvCat4,etablisseme
                             ((~finessSirene['trancheEffectifsEtablissement'].isin(['NN','00','0.0'])) & (~finessSirene['trancheEffectifsEtablissement'].isna()) )].copy()
     return finessSirene
 
-def effectifMoyen(etablissementEffectifPositifOuvert,fichierTrancheEffectif):
+def fichierEnseignementSirene(Fichier1er2ndDegre,fichierEtablissement,UniteLegale33,fichier2ndDegre,fichierEnsSup,etablissementEffectifPositifOuvert):
     """
-    pour l'ensemble des activites avec effectif issus de sirene, calculé l'effectif moyen
+    geolocaliser les donnees sirene sur les etablissements 1er, 2nd degre et superieur
+    in : 
+        Fichier1er2ndDegre : fichiers geolocalise des etablissements du 1er et 2nd degre, issu de data.gouv et croise avec le rhv pour avoir le plus proche voisin
+        fichierEtablissement : chemin vers le fichier des etablissement issu de data.gouv, filtre sur la gironde
+        UniteLegale33 : fichier des unites legales sur la gironde
+        fichier2ndDegre : issu de l'onisep sur data.gouv : permet le lien numero_uai - siren
+        fichierEnsSup : fichier des etabliseeemnt d'enseignement superiuer issu de data.gouv, avec ident et rhv, uniquement pour cat_rhv=4
+        etablissementEffectifPositifOuvert : df des etablissement recensés préalsablement par etablissementsBdxMet()
     """
+    #cchareger les donnees
+    premierSecondDegre=gp.read_file(Fichier1er2ndDegre)
+    etab33=pd.read_csv(fichierEtablissement,dtype={'siren':str,'nic':str,'siret':str})[['siren','nic','siret','etatAdministratifEtablissement','trancheEffectifsEtablissement','anneeEffectifsEtablissement','etablissementSiege','activitePrincipaleEtablissement','caractereEmployeurEtablissement','numeroVoieEtablissement','typeVoieEtablissement','libelleVoieEtablissement','codeCommuneEtablissement','enseigne1Etablissement']]
+    UniteLegale33=pd.read_csv(UniteLegale33,dtype={'siren':str})[['siren','trancheEffectifsUniteLegale','anneeEffectifsUniteLegale','categorieEntreprise','etatAdministratifUniteLegale','activitePrincipaleUniteLegale','caractereEmployeurUniteLegale']]
+    listeColonnes=['id', 'siret', 'geometry', 'ident', 'cat_rhv', 'siren', 'nic',
+       'etatAdministratifEtablissement', 'trancheEffectifsEtablissement',
+       'anneeEffectifsEtablissement', 'etablissementSiege',
+       'activitePrincipaleEtablissement', 'caractereEmployeurEtablissement',
+       'trancheEffectifsUniteLegale', 'anneeEffectifsUniteLegale',
+       'categorieEntreprise', 'etatAdministratifUniteLegale',
+       'activitePrincipaleUniteLegale', 'caractereEmployeurUniteLegale']
+    
+    #1er degres issu du fichier SIrene
+    etablissement1erdegre=etab33.loc[etab33.activitePrincipaleEtablissement.isin(['85.20Z', '85.10Z'])].copy()
+    #mise en form d'un attribut adresse a comparer avec les donnees de localisation
+    etablissement1erdegre['numRue']=etablissement1erdegre.numeroVoieEtablissement.apply(lambda x : str(int(str(x).replace('.0',''))) if not pd.isnull(x) else '')
+    etablissement1erdegre['typeVoie']=etablissement1erdegre.typeVoieEtablissement.apply(lambda x : str(x) if not pd.isnull(x) else '')
+    etablissement1erdegre['nomVoie']=etablissement1erdegre.libelleVoieEtablissement.apply(lambda x : str(x) if not pd.isnull(x) else '')
+    etablissement1erdegre['adresse']=etablissement1erdegre.apply(lambda x : x['numRue']+' '+x['typeVoie']+' '+x['nomVoie'], axis=1)
+    #on joint tous les cas de figure possible, puis on filtre sur les communes et on calcule 
+    CommuneOk=premierSecondDegre.assign(code_commu=lambda x : x['code_commu'].astype(int)).merge(etablissement1erdegre.assign(code_commu=lambda x : x['codeCommuneEtablissement'].astype(int)), on='code_commu')
+    CommuneOk['ratio_adresse']=CommuneOk.apply(lambda x : SequenceMatcher(None, x['adresse'].
+            lower().replace('av','avenue').replace('crs','cours').replace('crs','cours'), x['adresse_ua'].lower()).ratio() 
+            if all([not pd.isnull(a) for a in[x['adresse'], x['adresse_ua']]]) else 0, axis=1)
+    CommuneOk['ratio_nom']=CommuneOk.apply(lambda x : SequenceMatcher(None, unidecode(x['enseigne1Etablissement'].
+            lower()).replace('elementaire','primaire'), unidecode(x['appellatio'].lower()).replace('elementaire','primaire')).ratio() 
+            if all([not pd.isnull(a) for a in[x['enseigne1Etablissement'], x['appellatio']]]) else 0, axis=1)
+    CommuneOk['somme_ratio']=CommuneOk.ratio_adresse+CommuneOk.ratio_nom    
+    geoloc1erDegre=CommuneOk.loc[CommuneOk['somme_ratio']==
+            CommuneOk.groupby('siret').somme_ratio.transform(max)].copy()
+    geoloc1erDegre=geoloc1erDegre.merge(UniteLegale33, on='siren').drop('id', axis=1).rename(columns={'numero_uai':'id'})[listeColonnes]
+    
+    #2nd degre, plus simple carle numero siren est present dans un fihicer de coreepsondance
+    fichier2ndDegre=pd.read_csv(fichier2ndDegre,sep=';',usecols=['code UAI','n° SIRET'])
+    geoloc2ndDegre=premierSecondDegre[['numero_uai', 'geometry', 'ident', 'cat_rhv']].merge(fichier2ndDegre[['code UAI','n° SIRET']].rename(columns={'code UAI':'numero_uai','n° SIRET':'siret'}),on='numero_uai').merge(
+    etab33, on='siret').merge(UniteLegale33,on='siren', how='left').rename(columns={'numero_uai':'id'})[listeColonnes]
+    
+    #Enseignements superioeurs
+    EnseignementSupCat4Rhv=gp.read_file(fichierEnsSup)
+    EnseignementSupCat4Rhv=EnseignementSupCat4Rhv.loc[~EnseignementSupCat4Rhv.ndegsiret.isna()].copy()
+    EnseignementSupCat4Rhv['ndegsiret']=EnseignementSupCat4Rhv.ndegsiret.apply(lambda x : str(x).replace('.0',''))
+    geolocEnseignementSup=EnseignementSupCat4Rhv[['codeuai','ndegsiret','ident','cat_rhv','geometry']].rename(columns={'codeuai':'id','ndegsiret':'siret'}).merge(etab33, on='siret').merge(
+        UniteLegale33,on='siren', how='left')[listeColonnes]
+    enseignementSirene=pd.concat([geoloc1erDegre,geoloc2ndDegre,geolocEnseignementSup], axis=0)
+    enseignementSirene=enseignementSirene.loc[(~enseignementSirene.siret.isin(etablissementEffectifPositifOuvert.siret.tolist())) & ((enseignementSirene.trancheEffectifsEtablissement.isna()) & (~enseignementSirene.trancheEffectifsUniteLegale.isna()) & (enseignementSirene.etablissementSiege) & ((~enseignementSirene['trancheEffectifsUniteLegale'].isin(['NN','00','0.0'])))) | 
+                            ((~enseignementSirene['trancheEffectifsEtablissement'].isin(['NN','00','0.0'])) & (~enseignementSirene['trancheEffectifsEtablissement'].isna()) )].copy()
+    return enseignementSirene,geoloc1erDegre,geoloc2ndDegre,geolocEnseignementSup
+
+def definitionVariablesActivites(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichierEtablissement, fichierUnitesLegales,
+                                 fichierTrancheEffectif,fichierPpvFinessRhvCat4,Fichier1er2ndDegre,fichier2ndDegre,
+                                 fichierEnsSup) : 
+    """
+    regrouper tout les sources d'activites et calculer les donnees necessaire pour le calcul de trajets
+    in : 
+        fichierEtablissement : fichier des etablissement sur la gironde
+        fichierUnitesLegales : fichier des unites legales sur la gironde
+        ppvActiviteRhv : ident de la ligne rhv plus proche voisin de l'activite
+        nafListen5 : df des codes naf avec ajout d'une colonne perso sur les codes a exclure
+        fichierTrancheEffectif : fichier perso d'association d'uen nombre arbitraire a une tranche d'effecteif
+        fichierPpvFinessRhvCat4 : chemin vers les données de finess issu de data.gouv, limitéd selon le plus proche voisin de categorie 4 du rhv
+        fichier2ndDegre : issu de l'onisep sur data.gouv : permet le lien numero_uai - siren
+        Fichier1er2ndDegre : fichiers geolocalise des etablissements du 1er et 2nd degre, issu de data.gouv et croise avec le rhv pour avoir le plus proche voisin
+        fichierEtablissement : chemin vers le fichier des etablissement issu de data.gouv, filtre sur la gironde
+        fichierEnsSup : fichier des etabliseeemnt d'enseignement superiuer issu de data.gouv, avec ident et rhv, uniquement pour cat_rhv=4
+    out : 
+        activ_ligne_proche : df avec pour chaque activite, le nb moyen d'effectif et le point le plus proche projete sur le rhv
+    """
+    listeColonnes=['id', 'siret', 'geometry', 'ident', 'siren', 'nic',
+       'etatAdministratifEtablissement', 'trancheEffectifsEtablissement',
+       'anneeEffectifsEtablissement', 'etablissementSiege',
+       'activitePrincipaleEtablissement', 'caractereEmployeurEtablissement',
+       'trancheEffectifsUniteLegale', 'anneeEffectifsUniteLegale',
+       'categorieEntreprise', 'etatAdministratifUniteLegale',
+       'activitePrincipaleUniteLegale', 'caractereEmployeurUniteLegale']
+    etablissementEffectifPositifOuvert=etablissementsBdxMet(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, 
+                                                fichierEtablissement, fichierUnitesLegales)[1]
+    finessSirene=fichierSireneFiness(fichierEtablissement,fichierPpvFinessRhvCat4, etablissementEffectifPositifOuvert,fichierUnitesLegales)
+    enseignementSirene=fichierEnseignementSirene(Fichier1er2ndDegre,fichierEtablissement, fichierUnitesLegales,fichier2ndDegre,
+                                                 fichierEnsSup,etablissementEffectifPositifOuvert)[0]              
+    activitesCompletes=pd.concat([etablissementEffectifPositifOuvert.rename(columns={'ident':'siren_1','ident_rhv':'ident'})[listeColonnes],finessSirene[listeColonnes],enseignementSirene[listeColonnes]],
+                             axis=0)
+    #pour les établissement avec effectif : prendre la valeur d'éffectif de l'établissement, sinon celle de l'unité légale
+    activitesCompletes['effecFinal']=activitesCompletes.apply(lambda x : x['trancheEffectifsUniteLegale'] if pd.isnull(x['trancheEffectifsEtablissement']) else x['trancheEffectifsEtablissement'], axis=1 )
     #ensuite on recupere l'affectation à un effectif moyen et on joint le tout
     descriptionEffectif=pd.read_csv(fichierTrancheEffectif)
-    effectifEtablissement=etablissementEffectifPositifOuvert.merge(descriptionEffectif, left_on='effecFinal', right_on='codeEffectif',how='left')
+    effectifEtablissement=activitesCompletes.merge(descriptionEffectif, left_on='effecFinal', right_on='codeEffectif',how='left')
+    #et on affecte la geometri du point projete sur la ligne
+    activ_ligne_proche=effectifEtablissement.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
+    activ_ligne_proche['point_proche']=activ_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
+    activ_ligne_proche.rename(columns={'id':'ID'}, inplace=True)
+    return activ_ligne_proche
+    
+    
 
 def definitionVariablesVoies(graph_filaire,gdf_traf_1234, voies_nc ):
     """
