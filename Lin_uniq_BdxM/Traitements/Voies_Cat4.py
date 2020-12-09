@@ -18,6 +18,7 @@ from shapely.ops import nearest_points
 from collections import Counter
 from difflib import SequenceMatcher
 from unidecode import unidecode
+from datetime import datetime
 
 """#############################################################
 PARTIE POINT DE COMPTAGE
@@ -136,7 +137,7 @@ def importDonneesBase(fichierTraf1234,fichierVoiesNonRenseignees,fichierBati,fic
     gdf_traf_1234=gp.read_file(fichierTraf1234)
     #importdes voies non connues
     voies_nc=gp.read_file(fichierVoiesNonRenseignees)
-    voies_nc=pd.concat([voies_nc,gdf_traf_1234.loc[gdf_traf_1234.cat_rhv.isin(['4','64'])].rename(columns={'id':'id_x'})[voies_nc.columns[:-1]]],axis=0, sort=False)
+    voies_nc=pd.concat([voies_nc,gdf_traf_1234.loc[gdf_traf_1234.cat_rhv.isin(['4','64']) & (gdf_traf_1234.type_cpt.isin(['permanent', 'ponctuel']))].rename(columns={'id':'id_x'})[voies_nc.columns[:-1]]],axis=0, sort=False)
     voies_nc['longueur']=voies_nc.geometry.length
     bati=gp.read_file(fichierBati)
     #plus proche voisin sur la base de tout le rhv route
@@ -156,12 +157,11 @@ def importDonneesBase(fichierTraf1234,fichierVoiesNonRenseignees,fichierBati,fic
     coreesp_bati2['ident']=coreesp_bati2.ident.apply(lambda x : str(x))
     return gdf_traf_1234, voies_nc, bati,coreesp_bati2
 
-def definitionVariablesBati(gdf_rhv_groupe,gdf_traf_1234, bati,coreesp_bati2):
+def definitionVariablesBati(graph_filaire,gdf_traf_1234, bati,coreesp_bati2):
     """
     perparer les donnees liées au batiment necessaires a la recherche de trajets
     in  : 
         graph_filaire : df du graph du filiare de voie : ca peut etre ameliorer : je me suis pris les pieds dans le tapis avec les sources et target des differents fcihiers
-        gdf_rhv_groupe : df du rhv avec l'id troncon
         gdf_traf_123 cf importDonneesBase()
         bati : issu de importDonneesBase()
         voies_nc : issu de importDonneesBase()
@@ -177,7 +177,7 @@ def definitionVariablesBati(gdf_rhv_groupe,gdf_traf_1234, bati,coreesp_bati2):
     #ramener la geometrie de la ligne la plus proche sur le bati inconnu
     bati_ligne_proche=bati_voie_inconnue.loc[(bati_voie_inconnue['PopT2016']>=1) & (bati_voie_inconnue['ID']!='BatiFictif')].merge(coreesp_bati2[['ID','ident']], on='ID')
     bati_ligne_proche['ident']=bati_ligne_proche.ident.apply(lambda x : str(x))
-    bati_ligne_proche=bati_ligne_proche.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
+    bati_ligne_proche=bati_ligne_proche.merge(graph_filaire[['ident', 'geom']], on='ident').rename(columns={'geometry':'geom_p', 'geom':'geom_l'})
     #calculer le point le plus proche situé sur la ligne
     bati_ligne_proche['point_proche']=bati_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
     return bati_ligne_proche
@@ -208,7 +208,6 @@ def etablissementsBdxMet(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichierEtabli
     #filtre sur les activités de constrcution et de transport
     etablissementEffectifPositif=etablissementEffectifPositif.loc[~etablissementEffectifPositif.activitePrincipaleEtablissement.isin(nafListen5.loc[nafListen5.ModifEffectif=='N'].Code.tolist())]
     etablissementEffectifPositifOuvert=etablissementEffectifPositif.loc[(etablissementEffectifPositif.etatAdministratifEtablissement!='F')].copy()
-    
     return etablissementEnrichi,etablissementEffectifPositifOuvert
 
 def fichierSireneFiness(fichierEtablissement,fichierPpvFinessRhvCat4,etablissementEffectifPositifOuvert,UniteLegale33):
@@ -322,7 +321,8 @@ def definitionVariablesActivites(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichi
     finessSirene=fichierSireneFiness(fichierEtablissement,fichierPpvFinessRhvCat4, etablissementEffectifPositifOuvert,fichierUnitesLegales)
     enseignementSirene=fichierEnseignementSirene(Fichier1er2ndDegre,fichierEtablissement, fichierUnitesLegales,fichier2ndDegre,
                                                  fichierEnsSup,etablissementEffectifPositifOuvert)[0]              
-    activitesCompletes=pd.concat([etablissementEffectifPositifOuvert.rename(columns={'ident':'siren_1','ident_rhv':'ident'})[listeColonnes],finessSirene[listeColonnes],enseignementSirene[listeColonnes]],
+    activitesCompletes=pd.concat([etablissementEffectifPositifOuvert.rename(columns={'ident':'siren_1','ident_rhv':'ident'})[listeColonnes].assign(nature='activite'),
+                                  finessSirene[listeColonnes].assign(nature='sante_social'),enseignementSirene[listeColonnes].assign(nature='enseignement')],
                              axis=0)
     #pour les établissement avec effectif : prendre la valeur d'éffectif de l'établissement, sinon celle de l'unité légale
     activitesCompletes['effecFinal']=activitesCompletes.apply(lambda x : x['trancheEffectifsUniteLegale'] if pd.isnull(x['trancheEffectifsEtablissement']) else x['trancheEffectifsEtablissement'], axis=1 )
@@ -333,9 +333,8 @@ def definitionVariablesActivites(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichi
     activ_ligne_proche=effectifEtablissement.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
     activ_ligne_proche['point_proche']=activ_ligne_proche.apply(lambda x : nearest_points(x['geom_p'],x['geom_l'])[1],axis=1)
     activ_ligne_proche.rename(columns={'id':'ID'}, inplace=True)
+    activ_ligne_proche.drop_duplicates('ID',inplace=True)
     return activ_ligne_proche
-    
-    
 
 def definitionVariablesVoies(graph_filaire,gdf_traf_1234, voies_nc ):
     """
@@ -351,11 +350,80 @@ def definitionVariablesVoies(graph_filaire,gdf_traf_1234, voies_nc ):
     """
     ensemble_lignes=voies_nc.reset_index(drop=True)
     #j'ai besoin de cette ligne car les source_target de gdf_traf_1234 sont différents de ceux de ensemble_lignes
-    gdf_tot_eq_1234=graph_filaire.loc[graph_filaire.ident.isin(gdf_traf_1234.loc[(~gdf_traf_1234.cat_rhv.isin(('4','64'))) & (~gdf_traf_1234.cat_rhv.isna())].ident.tolist())] #trouver tt les lignes qui ne sont pas cat4 ou sans valeur
+    gdf_tot_eq_1234=gdf_traf_1234.loc[(~gdf_traf_1234.cat_rhv.isin(('4','64'))) & (~gdf_traf_1234.cat_rhv.isna())] #trouver tt les lignes qui ne sont pas cat4 ou sans valeur
     vertex_connus=list(set(gdf_tot_eq_1234.source.tolist()+gdf_tot_eq_1234.target.tolist()))
     vertex_impasse=[k for k, v in Counter(graph_filaire.source.tolist()+graph_filaire.target.tolist()).items() if v==1]
     return ensemble_lignes,vertex_connus, vertex_impasse
 
+
+def calculTrajets(bati_ligne_proche,ensemble_lignes,vertex_connus, vertex_impasse, graph_filaire_vertex):
+    """
+    fonction de calcul des trajets pour un ensemble d'identifiant
+    utilise les classes ensemble_trajet et trajet
+    in : 
+        bati_ligne_proche : df des batiment avec l'ident du rhv proche et la géomtrie du point projete sur le rhv (cf definitionVariablesBati() ou definitionVariablesVoies())
+        ensemble_lignes :ensemble_lignes : df des voies non connues avec reset de l'index cf definitionVariablesVoies()
+        vertex_connus : vertex des voies qui ne sont pas de cat 4 ou 64 et dont le cat_rhv est connu cf definitionVariablesVoies()
+        vertex_impasse : vertex des voies en impasses cf definitionVariablesVoies()
+        graph_filaire_vertex : vertex du graph filaire
+    out : 
+        resultat : df des trajets retenus par batiment
+        dico_df_tt_trajet : dico des trajets possible pour chaque batiment
+        liste_bati_erreur : list des identifaint de bati avec erreur
+    """
+    resultat=pd.DataFrame({'bati':[], 'ident':[], 'noeud_proche':[],'trajet_court':[],'comm':[], 'noeud_cat3':[]})
+    #dico_df_tt_trajet=d_tot
+    dico_df_tt_trajet={}
+    #i=r_tot.index.max()+1
+    i=0
+    liste_bati_erreur=[]
+    for e,b in enumerate(bati_ligne_proche['ID'].tolist()) : 
+        if e%100==0 and e!=0:
+            print(f'nb bati traite : {e}, {datetime.now()},{b}')
+        try : #recuperer l'ident pres du bati a traiter, si pas d'ident, on continue
+            ident_proche_bati=str(bati_ligne_proche.loc[bati_ligne_proche['ID']==b].ident.to_numpy()[0])#risque si ident pas trouver d'IndexError
+        except IndexError : 
+            liste_bati_erreur.append(b)
+            continue
+        if ensemble_lignes.loc[ensemble_lignes['ident']==ident_proche_bati].empty : #si l'ident du rhv proche du bati n'est pas dans la liste, on indique et on continue
+            resultat.loc[i]=[b,ident_proche_bati,np.NaN,np.NaN,'pas ident proche dans voies nc',np.NaN]
+            i+=1
+            continue
+        point_depart=bati_ligne_proche.loc[bati_ligne_proche['ID']==b].point_proche.values[0]
+        trajets=ensemble_trajet(ident_proche_bati,point_depart,ensemble_lignes, vertex_connus, vertex_impasse, graph_filaire_vertex)
+        noeud_proche=trajets.noeud_proche
+        if ident_proche_bati in resultat.ident.tolist() : #si la ligne a deja ete traite avec un autre batiment
+            df_find_existant=resultat.loc[(resultat['ident']==ident_proche_bati) & (resultat['noeud_proche']==noeud_proche)] # si le noeud le plus proche est le mm que celui dun bati precedent, on ne fait que recuperer les donnees calculees car on est dans le mm cas
+            if not df_find_existant.empty:
+                resultat.loc[i]=[b,ident_proche_bati,noeud_proche,df_find_existant.trajet_court.values[0], 'Deduction_trajet-ident connu_noeud_proche connu',df_find_existant.noeud_cat3.values[0]]
+                i+=1
+            else : #sinon on deroule le processus
+                trajets.df_trajet_cat3_grp_OD=dico_df_tt_trajet[ident_proche_bati]
+                trajets.maj_longueur_tot(trajets.df_trajet_cat3_grp_OD)
+                df_finale=trajets.df_trajet_cat3_grp_OD.loc[trajets.df_trajet_cat3_grp_OD.longueur_tot==trajets.df_trajet_cat3_grp_OD.longueur_tot.min()]
+                resultat.loc[i]=[b,ident_proche_bati,noeud_proche,tuple(df_finale.lignes.to_numpy()[0]), 'Deduction_trajet-ident connu_noeud_proche varie',df_finale.points.to_numpy()[0][-1]]
+                i+=1
+        elif ident_proche_bati in [b for a in resultat.loc[~resultat['trajet_court'].isna()].trajet_court.to_numpy() for b in a] : #si l'ident est sur un chemin deja traite
+            resultat_equi=resultat.loc[resultat.trajet_court.apply(lambda x : ident_proche_bati in x if isinstance(x,tuple) else False)].iloc[0]
+            trajet_equi=resultat_equi.trajet_court
+            trajet_court=trajet_equi[trajet_equi.index(ident_proche_bati):] 
+            resultat.loc[i]=[b,ident_proche_bati,trajets.src,trajet_court, 'Deduction_trajet-ident sur chemin',resultat_equi.noeud_cat3]
+            i+=1
+            resultat.loc[i]=[b,ident_proche_bati,trajets.tgt,trajet_court, 'Deduction_trajet-ident sur chemin',resultat_equi.noeud_cat3]
+            i+=1
+        else : #sinon on deroule le calcul normalement
+            try :
+                trajets.calculs_trajets()
+            except PasDeCheminCat3Error : 
+                liste_bati_erreur.append(b)
+                continue
+            resultat.loc[i]=[b,ident_proche_bati,noeud_proche,trajets.trajet_court, 'Calcul_trajet',trajets.point_arrive]
+            i+=1
+            dico_df_tt_trajet[ident_proche_bati]=trajets.df_trajet_cat3_grp_OD
+    return resultat, dico_df_tt_trajet, liste_bati_erreur    
+    
+    
+    
 class ensemble_trajet : 
     def __init__(self,ligne_depart,point_depart, ensemble_lignes, vertex_connus, vertex_impasse, ensemble_vertex):
         self.ligne_depart,self.point_depart=ligne_depart,point_depart 
