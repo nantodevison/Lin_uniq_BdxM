@@ -327,7 +327,7 @@ def definitionVariablesActivites(gdf_rhv_groupe,ppvActiviteRhv,nafListen5, fichi
     #pour les établissement avec effectif : prendre la valeur d'éffectif de l'établissement, sinon celle de l'unité légale
     activitesCompletes['effecFinal']=activitesCompletes.apply(lambda x : x['trancheEffectifsUniteLegale'] if pd.isnull(x['trancheEffectifsEtablissement']) else x['trancheEffectifsEtablissement'], axis=1 )
     #ensuite on recupere l'affectation à un effectif moyen et on joint le tout
-    descriptionEffectif=pd.read_csv(fichierTrancheEffectif)
+    descriptionEffectif=pd.read_csv(fichierTrancheEffectif,low_memory=False)
     effectifEtablissement=activitesCompletes.merge(descriptionEffectif, left_on='effecFinal', right_on='codeEffectif',how='left')
     #et on affecte la geometri du point projete sur la ligne
     activ_ligne_proche=effectifEtablissement.merge(gdf_rhv_groupe[['ident', 'geometry']], on='ident').rename(columns={'geometry_x':'geom_p', 'geometry_y':'geom_l'})
