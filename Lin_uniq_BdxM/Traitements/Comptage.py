@@ -36,12 +36,12 @@ def mise_en_forme_bdxm_pct(cpt_pct_l93):
     in  : 
         cpt_pct_l93 : df issues de import_bdxm_pct()
     """
-    cpt_pct_l93['nom_voie']=cpt_pct_l93.nom_voie.apply(lambda x : re.sub(('�|�|�'),'e',x.lower().strip()))
+    cpt_pct_l93['nom_voie']=cpt_pct_l93.nom_voie.apply(lambda x : re.sub(('é|è|ê'),'e',x.lower().strip()))
     cpt_pct_l93['sens_unique']=cpt_pct_l93.sens_circulation.apply(lambda x : True if SequenceMatcher(None,' '.join(x.split(' ')[:2]).lower(),'sens unique').ratio()>0.8 else False)
     cpt_pct_l93['type_voie']=cpt_pct_l93.nom_voie.apply(lambda x : x.split(' ')[0])
     cpt_pct_l93['suffix_nom_voie']=cpt_pct_l93.nom_voie.apply(lambda x : ' '.join(x.split(' ')[1:]).lower())
     cpt_pct_l93['date_max_cptg']=cpt_pct_l93.observation.apply(lambda x : pd.to_datetime(x.split(' au ')[1],dayfirst=True))
-    cpt_pct_l93['sens_circulation']=cpt_pct_l93.sens_circulation.apply(lambda x : re.sub(('�|�|�'),'e',x.strip().lower()))
+    cpt_pct_l93['sens_circulation']=cpt_pct_l93.sens_circulation.apply(lambda x : re.sub(('é|è|ê'),'e',x.strip().lower()))
     cpt_pct_l93['observation']=cpt_pct_l93.observation.apply(lambda x : x.strip().lower())
 
 def grp_cluster_bdxm_pct(cpt_pct_l93):
