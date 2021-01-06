@@ -11,15 +11,15 @@ import pandas as pd
 from Base_BdTopo.Import_outils import import_donnes_base
 from Base_BdTopo.Rond_points import identifier_rd_pt
 
-def identifier_ronds_points(bdd, schema, graph_ligne, graph_vertex):
+def identifier_ronds_points(bdd, schema, graph_ligne, graph_vertex, localisation='boulot'):
     """
     identifier les rd pt du jeu dde données en se basant sur le travail interne OTV
     """
-    df=import_donnes_base(bdd, schema, graph_ligne, graph_vertex)
+    df=import_donnes_base(bdd, schema, graph_ligne, graph_vertex,localisation)
     df_avec_rd_pt=identifier_rd_pt(df)[0]
     lgn_rdpt=df_avec_rd_pt.loc[~df_avec_rd_pt.id_rdpt.isna()].copy()
     return df_avec_rd_pt, lgn_rdpt
-
+ 
 def creer_dico_noeud_rdpt(lgn_rdpt):
     """
     creer un dico avec comme cle le noeud synthetique et comme valeur tout les noeud d'un rd pt
@@ -69,7 +69,7 @@ def maj_graph_rdpt(df):
                    axis=0, sort=False).reset_index().groupby('id').count().reset_index().rename(columns={'ident':'cnt'})
     return cnt_maj
 
-def donnees_tot_rd_pt(gdf_base, bdd, schema, graph_ligne, graph_vertex):
+def donnees_tot_rd_pt(gdf_base, bdd, schema, graph_ligne, graph_vertex, localisation='boulot'):
     """
     dans une gdf de base, reaffacter source ou target avec un seul numero, pour tout les vertex relatif au mm rdpt    
     in : 
@@ -80,7 +80,7 @@ def donnees_tot_rd_pt(gdf_base, bdd, schema, graph_ligne, graph_vertex):
         graph_vertex : count des noeuds du référentiel avec ajout des attributs source et target  cf travail interne OTV
         dico_noeud : dico avec en cle une valeur de noeud et en value la list de tout les noeuds correspondants     
     """
-    lgn_rdpt=identifier_ronds_points(bdd, schema, graph_ligne, graph_vertex)[1]
+    lgn_rdpt=identifier_ronds_points(bdd, schema, graph_ligne, graph_vertex,localisation)[1]
     dico_noeud=creer_dico_noeud_rdpt(lgn_rdpt)
     gdf_rhv_rdpt_simple=gdf_base.loc[~gdf_base.ident.isin(lgn_rdpt.ident.to_list())].copy()
     #remplacement des sources et targets : 
