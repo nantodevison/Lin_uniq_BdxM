@@ -14,7 +14,7 @@ fichier 2017
 #############################"""
 
 #importer les donn�es et convertir les noms de champs
-fichier_src_2017=gp.read_file(r'C:\Users\martin.schoreisz\Documents\AffairesEnCours\Linearisation_BM\C19SA0101\Doc_travail\Donnees_source\MMM\2017_Matin_PR\2017_HPM_link.SHP')
+fichier_src_2017=gp.read_file(r'C:\Users\martin.schoreisz\Box\Dossier_Personnel_de_Martin_SCHOREISZ\Linearisation_BM\C19SA0101\Doc_travail\Donnees_source\MMM\2017_Matin_PR\2017_HPM_link.SHP')
 #d�finir les colonnes d�finitives (PLUS TARD ON FERA UN FILTRE EN AMONT)
 liste_col_def_2017=['NO', 'FROMNODENO', 'TONODENO', 'TYPENO', 'TSYSSET', 'LENGTH', 'NUMLANES', 'CAPPRT', 'V0_TV', 'VOLVEHPR~1', 
 'Q_HC_PL', 'Q_HC_TV', 'Q_HC_VL', 'Q_HPM_PL', 'Q_HPM_TV', 'Q_HPM_VL', 'Q_HPS_PL', 'Q_HPS_TV', 'Q_HPS_VL', 'Q_Jour_PL', 'Q_Jour_TV',
@@ -39,7 +39,7 @@ fichier 2019
 #############################"""
 
 #import
-fichier_src_2019=gp.read_file(r'C:\Users\martin.schoreisz\Documents\AffairesEnCours\Linearisation_BM\C19SA0101\Doc_travail\Donnees_source\MMM\MMM_Maj_EDA2017\source\charges_link.SHP')
+fichier_src_2019=gp.read_file(r'C:\Users\martin.schoreisz\Box\Dossier_Personnel_de_Martin_SCHOREISZ\Linearisation_BM\C19SA0101\Doc_travail\Donnees_source\MMM\MMM_Maj_EDA2017\source\charges_link.SHP')
 
 #mise en forme
 liste_col_def_2019=['NO', 'FROMNODENO', 'TONODENO', 'TYPENO', 'VOLVEHPR~1', 'Q_Jour_PL', 'Q_Jour_TV',
@@ -54,7 +54,7 @@ fichier_src_simpl_2019=fichier_src_simpl_2019.loc[fichier_src_simpl_2019.apply(l
 #calcul tmja
 fichier_src_simpl_2019['tmja_tv']=fichier_src_simpl_2019.Q_Jour_TV+fichier_src_simpl_2019.R_Q_Jour_TV
 #export si besoin
-fichier_src_simpl_2019.to_file(r'C:\Users\martin.schoreisz\Documents\AffairesEnCours\Linearisation_BM\C19SA0101\Doc_travail\Donnees_source\MMM\MMM_Maj_EDA2017\simplifie\MMM_simple_2019.shp')
+#fichier_src_simpl_2019.to_file(r'C:\Users\martin.schoreisz\Box\Dossier_Personnel_de_Martin_SCHOREISZ\Linearisation_BM\C19SA0101\Doc_travail\Donnees_source\MMM\MMM_Maj_EDA2017\simplifie\MMM_simple_2019.shp')
 
 def import_fichiers_mmm(fichier_simple, fichier_correpondance):
     """
